@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+import db
 
 app = FastAPI(title="industrialdoctor-backend")
 
