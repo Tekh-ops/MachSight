@@ -1,4 +1,7 @@
+import json
 import sys
+import time
+import uuid
 from pathlib import Path
 
 # Add sibling models/ folder to sys.path before any other imports
@@ -9,6 +12,7 @@ from ml.reference_builder import load_reference_set
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 import db
+import ml_stub
 
 # Load baseline reference set at startup
 ref_path = Path(__file__).resolve().parent.parent / "models" / "ml" / "reference.pkl"
@@ -56,6 +60,54 @@ def health_check():
     return {"status": "ok"}
 
 
+async def trigger_investigation(reading: dict, processed: dict, result: dict):
+    """Runs autonomous reasoning loop on anomalous telemetry readings."""
+    trace_id = str(uuid.uuid4())
+    evidence = {
+        **reading,
+        **processed,
+        "reasons": result["reasons"],
+        "anomaly_score": result["anomaly_score"],
+    }
+    MAX_LOOPS = 3
+    history = []
+
+    for _ in range(MAX_LOOPS):
+        reasoning_result = ml_stub.reason(evidence, history)
+        step_row = {
+            "trace_id": trace_id,
+            "timestamp": time.time(),
+            "step_type": "reasoning",
+            "payload": json.dumps(reasoning_result),
+        }
+        db.insert("investigations", step_row)
+        await broadcast("investigation_step", step_row)
+
+        if reasoning_result.get("action") == "diagnose":
+            diag_row = {
+                "trace_id": trace_id,
+                "timestamp": time.time(),
+                "step_type": "diagnosis",
+                "payload": json.dumps(reasoning_result),
+            }
+            db.insert("investigations", diag_row)
+            await broadcast("diagnosis", diag_row)
+            return
+
+        if reasoning_result.get("action") == "request_more_data":
+            history.append(reasoning_result)
+            continue
+
+    await broadcast(
+        "diagnosis",
+        {
+            "trace_id": trace_id,
+            "diagnosis": "inconclusive",
+            "reason": "max investigation depth reached",
+        },
+    )
+
+
 @app.websocket("/telemetry/ingest")
 async def telemetry_ingest_ws(websocket: WebSocket):
     await websocket.accept()
@@ -99,8 +151,8 @@ async def telemetry_ingest_ws(websocket: WebSocket):
             # Broadcast event type "processed"
             await broadcast("processed", {**processed_row, "id": processed_id})
 
-            # If result is an anomaly, print to console for now
+            # If result is an anomaly, trigger autonomous investigation
             if result["is_anomaly"] is True:
-                print(f"[ANOMALY DETECTED] {result}")
+                await trigger_investigation(reading, processed, result)
     except WebSocketDisconnect:
         pass
