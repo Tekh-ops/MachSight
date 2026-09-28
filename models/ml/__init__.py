@@ -10,6 +10,7 @@ from .detector import score_reading
 from .features import process_reading, process_window
 from .classify import classify, FAULT_SIGNATURES
 from .pipeline import analyze, build_evidence
+from .reasoner import reason, reason_fallback
 
 __all__ = [
     "TelemetryReading",
@@ -26,5 +27,8 @@ __all__ = [
     "FAULT_SIGNATURES",
     "analyze",
     "build_evidence",
+    "reason",
+    "reason_fallback",
 ]
+
 
