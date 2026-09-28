@@ -39,6 +39,32 @@ MACHSIGHT_USE_STUB = os.environ.get("MACHSIGHT_USE_STUB", "0").lower() in ("1", 
 
 app = FastAPI(title="industrialdoctor-backend")
 
+
+async def warmup_ollama() -> None:
+    """Performs a lightweight warmup query so the first investigation doesn't suffer a cold model load."""
+    use_stub = (
+        MACHSIGHT_USE_STUB
+        or os.environ.get("MACHSIGHT_USE_STUB", "0").lower() in ("1", "true", "yes")
+    )
+    if use_stub:
+        return
+    model = os.environ.get("MACHSIGHT_LLM_MODEL", "qwen2.5:3b-instruct")
+    ollama_url = os.environ.get("OLLAMA_URL", "http://localhost:11434").rstrip("/")
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            await client.post(
+                f"{ollama_url}/api/generate",
+                json={"model": model, "prompt": "warmup", "stream": False, "keep_alive": "30m"}
+            )
+        logger.info(f"Ollama warmup complete for model {model}")
+    except Exception as e:
+        logger.warning(f"Ollama warmup skipped ({type(e).__name__}): {e}")
+
+
+@app.on_event("startup")
+async def on_startup():
+    asyncio.create_task(warmup_ollama())
+
 # Active WebSocket connections for telemetry broadcasting
 active_connections: list[WebSocket] = []
 
@@ -130,7 +156,6 @@ async def trigger_investigation(reading: dict, processed: dict, result: dict):
         is_investigating = True
         try:
             trace_id = str(uuid.uuid4())
-            MAX_LOOPS = 3
             history = []
 
             # Determine whether to use emergency stub or real LLM reasoner
@@ -154,14 +179,54 @@ async def trigger_investigation(reading: dict, processed: dict, result: dict):
                 if k in reading and k not in evidence:
                     evidence[k] = reading[k]
 
+            # 1. Progressive diagnosis: immediately broadcast preliminary diagnosis (< 2ms)
+            prelim_result = reasoner.reason_fallback(
+                evidence=evidence,
+                history=[],
+                error_note="Preliminary rule match",
+                stage="preliminary"
+            )
+            prelim_row = {
+                "trace_id": trace_id,
+                "timestamp": time.time(),
+                "step_type": "diagnosis",
+                "payload": json.dumps(prelim_result),
+            }
+            db.insert("investigations", prelim_row)
+            await broadcast("diagnosis", prelim_row)
+
+            # 2. Skip pointless loops: if top rule match score >= 0.85 and sustained, go straight to 1 LLM call
+            top_matches = (
+                evidence.get("top_rule_matches")
+                or evidence.get("top_matches")
+                or evidence.get("matches")
+                or []
+            )
+            top_score = float(top_matches[0].get("score", 0.0)) if top_matches else 0.0
+            second_score = float(top_matches[1].get("score", 0.0)) if len(top_matches) > 1 else 0.0
+            is_decisive = (top_score >= 0.85 and (top_score - second_score >= 0.15))
+            allow_more_data = not (is_decisive and consecutive_anomalies >= 3)
+            max_loops = 1 if not allow_more_data else 3
+
             loop = asyncio.get_running_loop()
 
-            for _ in range(MAX_LOOPS):
+            for _ in range(max_loops):
                 # Run reasoning in executor to prevent blocking the event loop
                 reasoning_result = await loop.run_in_executor(None, reason_fn, evidence, history)
 
                 action = reasoning_result.get("action")
+
+                # If decisive, do not allow request_more_data; finalize diagnosis immediately
+                if not allow_more_data and action == "request_more_data":
+                    reasoning_result["action"] = "diagnose"
+                    if not reasoning_result.get("diagnosis"):
+                        reasoning_result["diagnosis"] = prelim_result.get("diagnosis")
+                        reasoning_result["confidence"] = prelim_result.get("confidence")
+                        reasoning_result["recommended_action"] = prelim_result.get("recommended_action")
+                    action = "diagnose"
+
                 if action == "diagnose":
+                    reasoning_result["stage"] = "final"
                     diag_row = {
                         "trace_id": trace_id,
                         "timestamp": time.time(),
@@ -209,10 +274,29 @@ async def trigger_investigation(reading: dict, processed: dict, result: dict):
                             evidence[k] = latest_raw[k]
                     continue
 
-            # Inconclusive fallback after MAX_LOOPS exhausted (now includes structured payload)
+            # Fallback when loops exhausted: never return inconclusive if rule match >= 0.50 exists
+            if top_score >= 0.50:
+                final_fallback = reasoner.reason_fallback(
+                    evidence=evidence,
+                    history=history,
+                    error_note="Max investigation depth reached; resolved from rule classification",
+                    stage="final"
+                )
+                final_fallback["stage"] = "final"
+                fallback_row = {
+                    "trace_id": trace_id,
+                    "timestamp": time.time(),
+                    "step_type": "diagnosis",
+                    "payload": json.dumps(final_fallback),
+                }
+                db.insert("investigations", fallback_row)
+                await broadcast("diagnosis", fallback_row)
+                return
+
+            concrete_reason = "max investigation depth reached with low rule confidence (<0.50)"
             inconclusive_payload = {
                 "action": "diagnose",
-                "reasoning": "Investigation reached maximum loop depth without definitive diagnosis.",
+                "reasoning": f"Investigation inconclusive: {concrete_reason}.",
                 "diagnosis": "inconclusive",
                 "confidence": 0.0,
                 "evidence_used": evidence.get("reasons", []),
@@ -223,7 +307,8 @@ async def trigger_investigation(reading: dict, processed: dict, result: dict):
                     "highlight_metrics": ["current_a", "rpm", "distance_cm"],
                     "suggested_charts": ["telemetry_overview"],
                 },
-                "reason": "max investigation depth reached",
+                "reason": concrete_reason,
+                "stage": "final",
             }
             inconclusive_row = {
                 "trace_id": trace_id,
@@ -231,7 +316,7 @@ async def trigger_investigation(reading: dict, processed: dict, result: dict):
                 "step_type": "diagnosis",
                 "payload": json.dumps(inconclusive_payload),
                 "diagnosis": "inconclusive",
-                "reason": "max investigation depth reached",
+                "reason": concrete_reason,
             }
             db.insert("investigations", {
                 "trace_id": trace_id,

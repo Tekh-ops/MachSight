@@ -157,20 +157,24 @@ def test_request_more_data_collects_new_window_and_diagnoses():
     # Verify 2 hops executed
     assert mock_reason.call_count == 2
 
-    # Check broadcasted events: 1 investigation_step + 1 diagnosis
+    # Check broadcasted events: 1 investigation_step + 2 diagnosis (preliminary + final)
     step_events = [data for evt, data in broadcasted_events if evt == "investigation_step"]
     diag_events = [data for evt, data in broadcasted_events if evt == "diagnosis"]
 
     assert len(step_events) == 1
-    assert len(diag_events) == 1
+    assert len(diag_events) == 2, f"Expected 2 diagnosis events (preliminary + final), got {len(diag_events)}"
 
-    final_diag = diag_events[0]
+    prelim_diag = diag_events[0]
+    assert json.loads(prelim_diag["payload"])["stage"] == "preliminary"
+
+    final_diag = diag_events[1]
     assert final_diag["step_type"] == "diagnosis"
     assert "payload" in final_diag
     parsed_payload = json.loads(final_diag["payload"])
     assert parsed_payload["action"] == "diagnose"
     assert parsed_payload["diagnosis"] == "Mechanical obstruction / drivetrain jam"
     assert parsed_payload["confidence"] == 0.96
+    assert parsed_payload["stage"] == "final"
 
 
 def test_inconclusive_event_has_payload():
@@ -228,8 +232,10 @@ def test_inconclusive_event_has_payload():
     assert mock_reason.call_count == 3
 
     diag_events = [data for evt, data in broadcasted_events if evt == "diagnosis"]
-    assert len(diag_events) == 1
-    inconclusive_event = diag_events[0]
+    assert len(diag_events) == 2, f"Expected 2 diagnosis events (preliminary + final), got {len(diag_events)}"
+    assert json.loads(diag_events[0]["payload"])["stage"] == "preliminary"
+
+    inconclusive_event = diag_events[1]
 
     # Check that payload JSON string exists and matches schema
     assert "payload" in inconclusive_event
@@ -239,13 +245,14 @@ def test_inconclusive_event_has_payload():
     assert parsed["action"] == "diagnose"
     assert parsed["diagnosis"] == "inconclusive"
     assert parsed["confidence"] == 0.0
-    assert parsed["reason"] == "max investigation depth reached"
+    assert "max investigation depth reached" in parsed["reason"]
+    assert parsed["stage"] == "final"
     assert "severity" in parsed
     assert "ui_hints" in parsed
 
     # Check backward-compatible top-level keys
     assert inconclusive_event["diagnosis"] == "inconclusive"
-    assert inconclusive_event["reason"] == "max investigation depth reached"
+    assert "max investigation depth reached" in inconclusive_event["reason"]
 
 
 def test_ingestion_latency_unaffected_while_reasoning_runs(client):
