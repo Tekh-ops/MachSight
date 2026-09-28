@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, type ReactElement } from 'react';
+import React, { useState, useEffect, useMemo, useRef, type ReactElement } from 'react';
 
 // ============================================================================
 // 1. TYPE DEFINITIONS & DOMAIN SCHEMAS
@@ -9,23 +9,85 @@ export type DiagnosticSeverity = 'HIGH' | 'MEDIUM' | 'LOW';
 export type DiagnosticStatus = 'PENDING_ACK' | 'TRIAGED' | 'DISPATCHED' | 'RESOLVED';
 export type LogSeverity = 'DEBUG' | 'INFO' | 'WARN' | 'CRIT';
 export type SubsystemType =
-  | 'POWERTRAIN'
-  | 'LUBRICATION'
-  | 'PNEUMATICS'
-  | 'BEARING_CAGE'
+  | 'DRIVETRAIN'
+  | 'MOTOR_ASSEMBLY'
+  | 'ULTRASONIC_ARRAY'
+  | 'POWER_TRAIN'
   | 'THERMAL_LOOP'
   | 'VISION_INSPECT';
 export type DashboardTab = 'LANDING' | 'OVERVIEW' | 'INSIGHTS' | 'DIAGNOSTICS' | 'LOGS';
 export type LogFilterSeverity = 'ALL' | 'CRIT' | 'WARN';
 
+// RC Car Telemetry Point (from backend)
 export interface TelemetryPoint {
   readonly time: string;
+  readonly distance_cm: number;
+  readonly current_a: number;
   readonly rpm: number;
-  readonly bearingTemp: number; // °C
-  readonly vibrationRms: number; // mm/s
-  readonly hydraulicPressure: number; // bar
-  readonly acousticEmission: number; // dB
-  readonly powerDraw: number; // kW
+  readonly mode: string;
+  readonly pwm_command: number;
+}
+
+// Backend WebSocket Event Types
+export interface WebSocketProcessedEvent {
+  readonly type: 'processed';
+  readonly event: 'processed';
+  readonly data: {
+    readonly raw_id: number;
+    readonly timestamp: number;
+    readonly current_rpm_ratio: number;
+    readonly current_zscore: number;
+    readonly rpm_zscore: number;
+    readonly mahalanobis_distance: number;
+    readonly distance_plausible: number;
+    readonly bucket_used: string;
+    readonly is_anomaly: number;
+    readonly id: number;
+  };
+}
+
+export interface WebSocketInvestigationStepEvent {
+  readonly type: 'investigation_step';
+  readonly event: 'investigation_step';
+  readonly data: {
+    readonly trace_id: string;
+    readonly timestamp: number;
+    readonly step_type: 'reasoning';
+    readonly payload: string; // JSON string requiring second parse
+  };
+}
+
+export interface WebSocketDiagnosisEvent {
+  readonly type: 'diagnosis';
+  readonly event: 'diagnosis';
+  readonly data: {
+    readonly trace_id: string;
+    readonly timestamp: number;
+    readonly step_type: 'diagnosis';
+    readonly payload: string; // JSON string requiring second parse
+  };
+}
+
+export type WebSocketEvent = WebSocketProcessedEvent | WebSocketInvestigationStepEvent | WebSocketDiagnosisEvent;
+
+// Parsed payload from investigation_step or diagnosis events
+export interface ParsedPayload {
+  readonly action: string;
+  readonly reasoning: string;
+  readonly diagnosis: string | null;
+  readonly confidence: number | null;
+  readonly evidence_used: readonly string[];
+  readonly recommended_action: string | null;
+  readonly more_data: {
+    readonly seconds: number;
+    readonly focus: string;
+  } | null;
+  readonly severity: 'warning' | 'critical' | 'info';
+  readonly ui_hints: {
+    readonly highlight_metrics: readonly string[];
+    readonly suggested_charts: readonly string[];
+  };
+  readonly stage?: 'preliminary' | 'final';
 }
 
 export interface MachineUnit {
@@ -39,7 +101,6 @@ export interface MachineUnit {
   readonly lastAnomaly: string;
   readonly telemetry: readonly TelemetryPoint[];
   readonly activeAlertCount: number;
-  readonly oilViscosity: number; // cSt
 }
 
 export interface LogEntry {
@@ -103,22 +164,21 @@ export interface HeaderProps {
   readonly setDarkMode: (dark: boolean) => void;
   readonly streamActive: boolean;
   readonly setStreamActive: (active: boolean) => void;
-  readonly streamIntervalMs: number;
   readonly packetCount: number;
   readonly activeAlertCount: number;
   readonly aiAnalysisRunning: boolean;
   readonly triggerManualDiagnostics: () => void;
   readonly onOpenIoConfig: () => void;
+  readonly isConnected: boolean;
 }
 
 export interface IoConfigModalProps {
   readonly isOpen: boolean;
   readonly onClose: () => void;
-  readonly apiEndpoint: string;
-  readonly setApiEndpoint: (endpoint: string) => void;
-  readonly streamIntervalMs: number;
-  readonly setStreamIntervalMs: (ms: number) => void;
+  readonly wsEndpoint: string;
+  readonly setWsEndpoint: (endpoint: string) => void;
   readonly streamActive: boolean;
+  readonly isConnected: boolean;
 }
 
 // ============================================================================
@@ -126,26 +186,24 @@ export interface IoConfigModalProps {
 // ============================================================================
 
 function generateInitialSeries(
+  baseDistance: number,
+  baseCurrent: number,
   baseRpm: number,
-  baseTemp: number,
-  baseVib: number,
-  basePress: number,
-  baseAcoustic: number,
-  baseKw: number
+  baseMode: string,
+  basePwm: number
 ): TelemetryPoint[] {
   const points: TelemetryPoint[] = [];
   const now = Date.now();
-  for (let i = 24; i >= 0; i--) {
-    const t = new Date(now - i * 5000);
+  for (let i = 300; i >= 0; i--) {
+    const t = new Date(now - i * 100);
     const timeStr = t.toTimeString().split(' ')[0] ?? '00:00:00';
     points.push({
       time: timeStr,
-      rpm: Math.round(baseRpm + (Math.random() - 0.5) * (baseRpm * 0.03)),
-      bearingTemp: +(baseTemp + (Math.random() - 0.5) * 1.8).toFixed(1),
-      vibrationRms: +(baseVib + (Math.random() - 0.5) * 0.4).toFixed(2),
-      hydraulicPressure: Math.round(basePress + (Math.random() - 0.5) * 8),
-      acousticEmission: Math.round(baseAcoustic + (Math.random() - 0.5) * 4),
-      powerDraw: +(baseKw + (Math.random() - 0.5) * 3.5).toFixed(1),
+      distance_cm: +(baseDistance + (Math.random() - 0.5) * 5).toFixed(1),
+      current_a: +(baseCurrent + (Math.random() - 0.5) * 0.5).toFixed(2),
+      rpm: Math.round(baseRpm + (Math.random() - 0.5) * 50),
+      mode: baseMode,
+      pwm_command: Math.round(basePwm + (Math.random() - 0.5) * 10),
     });
   }
   return points;
@@ -153,56 +211,28 @@ function generateInitialSeries(
 
 const INITIAL_MACHINES: readonly MachineUnit[] = [
   {
-    id: 'CNC-501',
-    tag: 'MILL-AX-01',
-    name: '5-Axis Heavy Machining Center',
-    area: 'Cell 3 - Powertrain Machining',
+    id: 'RC-01',
+    tag: 'CAR-PROTO-01',
+    name: 'RC Car Test Unit Alpha',
+    area: 'Test Track Zone A',
     status: 'WARNING',
     healthIndex: 78.4,
-    runtimeHours: 8421.2,
-    lastAnomaly: 'Bearing outer race defect frequency (BPFO) harmonic detected',
+    runtimeHours: 142.2,
+    lastAnomaly: 'Elevated current draw with reduced RPM ratio',
     activeAlertCount: 2,
-    oilViscosity: 44.8,
-    telemetry: generateInitialSeries(1450, 68.2, 4.2, 178, 54, 42.5),
+    telemetry: generateInitialSeries(85.0, 3.8, 1200, 'forward', 200),
   },
   {
-    id: 'EXT-104',
-    tag: 'EXTR-PLAST-04',
-    name: 'Twin-Screw Rotary Extruder',
-    area: 'Cell 1 - Polymer Line',
-    status: 'CRITICAL',
-    healthIndex: 52.1,
-    runtimeHours: 12940.0,
-    lastAnomaly: 'Thermal runaway zone 3 + hydraulic pressure cavitation',
-    activeAlertCount: 4,
-    oilViscosity: 38.1,
-    telemetry: generateInitialSeries(850, 92.5, 7.8, 235, 76, 68.0),
-  },
-  {
-    id: 'PMP-802',
-    tag: 'FEED-HYDR-02',
-    name: 'Main Coolant High-Pressure Pump',
-    area: 'Utility Vault B',
+    id: 'RC-02',
+    tag: 'CAR-PROTO-02',
+    name: 'RC Car Test Unit Beta',
+    area: 'Test Track Zone B',
     status: 'NOMINAL',
     healthIndex: 96.8,
-    runtimeHours: 3209.5,
+    runtimeHours: 89.5,
     lastAnomaly: 'None (Self-test passed 04:00 UTC)',
     activeAlertCount: 0,
-    oilViscosity: 46.2,
-    telemetry: generateInitialSeries(2980, 48.0, 1.1, 142, 38, 18.2),
-  },
-  {
-    id: 'TRB-019',
-    tag: 'GEN-COGEN-01',
-    name: 'Cogeneration Micro-Turbine',
-    area: 'Power Station Bay 2',
-    status: 'NOMINAL',
-    healthIndex: 91.5,
-    runtimeHours: 17830.4,
-    lastAnomaly: 'Exhaust gas spread delta within nominal band',
-    activeAlertCount: 0,
-    oilViscosity: 45.1,
-    telemetry: generateInitialSeries(12000, 74.3, 2.3, 195, 62, 120.4),
+    telemetry: generateInitialSeries(120.0, 2.1, 1800, 'forward', 180),
   },
 ];
 
@@ -210,53 +240,37 @@ const INITIAL_LOGS: readonly LogEntry[] = [
   {
     id: 'log-1001',
     timestamp: '12:26:45.102',
-    machineId: 'EXT-104',
-    level: 'CRIT',
-    subsystem: 'THERMAL_LOOP',
-    message: 'Zone 3 thermocouple differential > 14.5°C over setpoint. PID trim saturated.',
-    metricTrigger: 'T_ZONE3=93.4°C > LIM=85.0°C',
+    machineId: 'RC-01',
+    level: 'WARN',
+    subsystem: 'DRIVETRAIN',
+    message: 'Current/RPM ratio elevated above baseline threshold.',
+    metricTrigger: 'CURRENT_RPM_RATIO=1.26 > BASE',
   },
   {
     id: 'log-1002',
     timestamp: '12:26:30.820',
-    machineId: 'EXT-104',
-    level: 'WARN',
-    subsystem: 'PNEUMATICS',
-    message: 'Hydraulic accumulator cycle delta collapsed from 4.2s to 1.1s. Cavitation probable.',
-    metricTrigger: 'HYDR_P_DELTA=38bar',
+    machineId: 'RC-01',
+    level: 'INFO',
+    subsystem: 'ULTRASONIC_ARRAY',
+    message: 'Distance sensor reading within nominal range.',
+    metricTrigger: 'DISTANCE_CM=85.0',
   },
   {
     id: 'log-1003',
     timestamp: '12:25:58.411',
-    machineId: 'CNC-501',
-    level: 'WARN',
-    subsystem: 'BEARING_CAGE',
-    message: 'Spindle acceleration peak envelope spectrum matches BPFO defect harmonics (238 Hz).',
-    metricTrigger: 'VIB_RMS=4.38mm/s (warn: 3.5)',
+    machineId: 'RC-02',
+    level: 'DEBUG',
+    subsystem: 'MOTOR_ASSEMBLY',
+    message: 'Motor PWM command response within expected latency.',
+    metricTrigger: 'PWM_LATENCY=12ms',
   },
   {
     id: 'log-1004',
     timestamp: '12:24:12.004',
-    machineId: 'PMP-802',
+    machineId: 'RC-02',
     level: 'INFO',
-    subsystem: 'LUBRICATION',
-    message: 'Differential filter cartridge delta P nominal at 0.42 bar. Bypass closed.',
-  },
-  {
-    id: 'log-1005',
-    timestamp: '12:21:05.619',
-    machineId: 'TRB-019',
-    level: 'INFO',
-    subsystem: 'POWERTRAIN',
-    message: 'Turbine synchronous generator stator resistance balance check OK. THD 1.2%.',
-  },
-  {
-    id: 'log-1006',
-    timestamp: '12:19:44.298',
-    machineId: 'CNC-501',
-    level: 'DEBUG',
-    subsystem: 'VISION_INSPECT',
-    message: 'Surface finish roughness metric Ra 0.82 um computed from tool-camera feed #2.',
+    subsystem: 'POWER_TRAIN',
+    message: 'Battery voltage nominal, discharge rate stable.',
   },
 ];
 
@@ -500,12 +514,12 @@ export function DashboardHeader({
   setDarkMode,
   streamActive,
   setStreamActive,
-  streamIntervalMs,
   packetCount,
   activeAlertCount,
   aiAnalysisRunning,
   triggerManualDiagnostics,
   onOpenIoConfig,
+  isConnected,
 }: HeaderProps): ReactElement {
   return (
     <header className="border-b border-zinc-300 dark:border-zinc-800 bg-white dark:bg-zinc-900 sticky top-0 z-40">
@@ -535,8 +549,8 @@ export function DashboardHeader({
             </div>
             <div>
               <span className="text-zinc-400 dark:text-zinc-500 mr-1.5">STREAM:</span>
-              <span className={streamActive ? 'text-emerald-700 dark:text-emerald-400' : 'text-amber-700 dark:text-amber-400'}>
-                {streamActive ? `LIVE (${streamIntervalMs}ms)` : 'PAUSED'}
+              <span className={isConnected ? 'text-emerald-700 dark:text-emerald-400' : 'text-amber-700 dark:text-amber-400'}>
+                {isConnected ? 'LIVE (WebSocket)' : 'DISCONNECTED'}
               </span>
             </div>
             <div>
@@ -545,7 +559,7 @@ export function DashboardHeader({
             </div>
             <div>
               <span className="text-zinc-400 dark:text-zinc-500 mr-1.5">FACILITY:</span>
-              <span className="text-zinc-700 dark:text-zinc-300">Sector B - Heavy Assembly</span>
+              <span className="text-zinc-700 dark:text-zinc-300">Test Track Zone A</span>
             </div>
           </div>
         </div>
@@ -638,11 +652,10 @@ export function DashboardHeader({
 export function IoConfigModal({
   isOpen,
   onClose,
-  apiEndpoint,
-  setApiEndpoint,
-  streamIntervalMs,
-  setStreamIntervalMs,
+  wsEndpoint,
+  setWsEndpoint,
   streamActive,
+  isConnected,
 }: IoConfigModalProps): ReactElement | null {
   if (!isOpen) return null;
 
@@ -651,7 +664,7 @@ export function IoConfigModal({
       <div className="bg-white dark:bg-zinc-900 border border-zinc-400 dark:border-zinc-700 w-full max-w-lg p-5 font-mono text-xs shadow-2xl">
         <div className="flex justify-between items-center border-b border-zinc-200 dark:border-zinc-800 pb-3 mb-4">
           <span className="font-bold text-sm text-zinc-900 dark:text-zinc-100">
-            SCADA I/O Integration Gateway
+            WebSocket Configuration
           </span>
           <button
             onClick={onClose}
@@ -662,47 +675,27 @@ export function IoConfigModal({
         </div>
 
         <p className="text-xs font-sans text-zinc-600 dark:text-zinc-400 mb-4">
-          Configure real-time industrial telemetry ingress. When connected, the mock generator yields to live WebSocket / MQTT edge brokers.
+          Configure WebSocket connection to MachSight backend for real-time RC car telemetry and AI diagnosis events.
         </p>
 
         <div className="space-y-3">
           <div>
             <label className="block text-[10px] uppercase font-bold text-zinc-500 mb-1">
-              Edge Broker WebSocket URI
+              WebSocket Endpoint
             </label>
             <input
               type="text"
-              value={apiEndpoint}
-              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setApiEndpoint(e.target.value)}
+              value={wsEndpoint}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setWsEndpoint(e.target.value)}
               className="w-full p-2 bg-zinc-100 dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 text-zinc-900 dark:text-zinc-100 font-mono text-xs focus:outline-none focus:border-blue-600"
             />
           </div>
 
-          <div>
-            <label className="block text-[10px] uppercase font-bold text-zinc-500 mb-1">
-              Polling Stream Interval (ms)
-            </label>
-            <div className="flex gap-2">
-              {[1000, 2500, 5000].map((ms: number) => (
-                <button
-                  key={ms}
-                  onClick={() => setStreamIntervalMs(ms)}
-                  className={`px-3 py-1 border ${
-                    streamIntervalMs === ms
-                      ? 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-950 font-bold'
-                      : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 border-zinc-300 dark:border-zinc-700'
-                  }`}
-                >
-                  {ms}ms
-                </button>
-              ))}
-            </div>
-          </div>
-
           <div className="bg-zinc-100 dark:bg-zinc-950 p-2.5 border border-zinc-200 dark:border-zinc-800 text-[10px] text-zinc-500 space-y-1">
-            <div>API Schema: IndustrialDoctor/v4/MachineTelemetryPacket</div>
-            <div>Authentication: mTLS X.509 + Bearer Token</div>
-            <div>State: {streamActive ? 'Internal Simulation Active' : 'Idle'}</div>
+            <div>Backend API: MachSight FastAPI WebSocket</div>
+            <div>Event Types: processed, investigation_step, diagnosis</div>
+            <div>Connection Status: {isConnected ? 'CONNECTED' : 'DISCONNECTED'}</div>
+            <div>Stream State: {streamActive ? 'ACTIVE' : 'PAUSED'}</div>
           </div>
         </div>
 
@@ -715,7 +708,6 @@ export function IoConfigModal({
           </button>
           <button
             onClick={() => {
-              alert(`[IO CONFIG] Saved target broker: ${apiEndpoint}`);
               onClose();
             }}
             className="px-3 py-1.5 bg-blue-700 hover:bg-blue-800 text-white font-bold text-xs border border-blue-900"
@@ -736,17 +728,216 @@ export default function IndustrialDoctorApp(): ReactElement {
   const [darkMode, setDarkMode] = useState<boolean>(false);
   const [activeTab, setActiveTab] = useState<DashboardTab>('OVERVIEW');
   const [machines, setMachines] = useState<readonly MachineUnit[]>(INITIAL_MACHINES);
-  const [selectedMachineId, setSelectedMachineId] = useState<string>('CNC-501');
+  const [selectedMachineId, setSelectedMachineId] = useState<string>('RC-01');
   const [logs, setLogs] = useState<readonly LogEntry[]>(INITIAL_LOGS);
   const [findings, setFindings] = useState<readonly DiagnosticFinding[]>(INITIAL_FINDINGS);
   const [streamActive, setStreamActive] = useState<boolean>(true);
-  const [streamIntervalMs, setStreamIntervalMs] = useState<number>(2500);
-  const [packetCount, setPacketCount] = useState<number>(1420);
+  const [packetCount, setPacketCount] = useState<number>(0);
   const [activeFilterSeverity, setActiveFilterSeverity] = useState<LogFilterSeverity>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [aiAnalysisRunning, setAiAnalysisRunning] = useState<boolean>(false);
-  const [apiEndpoint, setApiEndpoint] = useState<string>('ws://scada-broker.lan:8080/v1/telemetry');
+  const [wsEndpoint, setWsEndpoint] = useState<string>('ws://localhost:8000/ws');
   const [showConfigModal, setShowConfigModal] = useState<boolean>(false);
+  const [isConnected, setIsConnected] = useState<boolean>(false);
+  const [currentDiagnosis, setCurrentDiagnosis] = useState<ParsedPayload | null>(null);
+  const [highlightMetrics, setHighlightMetrics] = useState<readonly string[]>([]);
+  const [anomalyDetected, setAnomalyDetected] = useState<boolean>(false);
+
+  const wsRef = useRef<WebSocket | null>(null);
+  const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastUpdateTimeRef = useRef<number>(0);
+  const telemetryBufferRef = useRef<Map<string, TelemetryPoint[]>>(new Map());
+
+  // Initialize telemetry buffer for each machine
+  useEffect(() => {
+    const buffer = new Map<string, TelemetryPoint[]>();
+    machines.forEach((machine) => {
+      buffer.set(machine.id, [...machine.telemetry]);
+    });
+    telemetryBufferRef.current = buffer;
+  }, [machines]);
+
+  // WebSocket connection with exponential backoff
+  useEffect(() => {
+    if (!streamActive) {
+      if (wsRef.current) {
+        wsRef.current.close();
+        wsRef.current = null;
+      }
+      setIsConnected(false);
+      return;
+    }
+
+    let reconnectAttempts = 0;
+    const maxReconnectAttempts = 10;
+    const baseReconnectDelay = 1000;
+
+    const connectWebSocket = () => {
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        return;
+      }
+
+      try {
+        const ws = new WebSocket(wsEndpoint);
+        wsRef.current = ws;
+
+        ws.onopen = () => {
+          console.log('WebSocket connected to', wsEndpoint);
+          setIsConnected(true);
+          reconnectAttempts = 0;
+        };
+
+        ws.onmessage = (event) => {
+          try {
+            const data: WebSocketEvent = JSON.parse(event.data);
+
+            // Rate limiting: max 10Hz UI updates
+            const now = Date.now();
+            if (now - lastUpdateTimeRef.current < 100) {
+              return;
+            }
+            lastUpdateTimeRef.current = now;
+
+            // Handle different event types
+            if (data.type === 'processed' && data.data) {
+              // Update telemetry from processed event
+              // Note: processed events don't contain raw telemetry, they contain analysis results
+              // We'll need to get raw telemetry from the backend's REST API or store it locally
+              setPacketCount((prev) => prev + 1);
+
+              // Update anomaly status
+              if (data.data.is_anomaly === 1) {
+                setAnomalyDetected(true);
+              } else {
+                setAnomalyDetected(false);
+              }
+            } else if ((data.type === 'investigation_step' || data.type === 'diagnosis') && data.data?.payload) {
+              // Double-encoded JSON: parse the payload string
+              try {
+                const parsedPayload: ParsedPayload = JSON.parse(data.data.payload);
+
+                if (data.type === 'diagnosis') {
+                  setCurrentDiagnosis(parsedPayload);
+                  setAiAnalysisRunning(false);
+
+                  // Add to findings if it's a final diagnosis
+                  if (parsedPayload.stage === 'final' && parsedPayload.diagnosis && parsedPayload.diagnosis !== 'inconclusive') {
+                    const newFinding: DiagnosticFinding = {
+                      id: `DIAG-${Date.now()}`,
+                      timestamp: new Date(data.data.timestamp * 1000).toISOString().replace('T', ' ').substring(0, 19) + ' UTC',
+                      machineId: selectedMachineId,
+                      severity: parsedPayload.severity === 'critical' ? 'HIGH' : 'MEDIUM',
+                      confidence: parsedPayload.confidence || 0,
+                      title: parsedPayload.diagnosis,
+                      rootCauseHypothesis: parsedPayload.reasoning,
+                      evidencePoints: parsedPayload.evidence_used,
+                      recommendedAction: parsedPayload.recommended_action || 'No action recommended',
+                      status: 'PENDING_ACK',
+                    };
+                    setFindings((prev) => [newFinding, ...prev]);
+                  }
+                }
+
+                // Update highlight metrics from UI hints
+                if (parsedPayload.ui_hints?.highlight_metrics) {
+                  setHighlightMetrics(parsedPayload.ui_hints.highlight_metrics);
+                }
+              } catch (parseError) {
+                console.error('Failed to parse payload:', parseError);
+              }
+            }
+          } catch (error) {
+            console.error('Failed to parse WebSocket message:', error);
+          }
+        };
+
+        ws.onerror = (error) => {
+          console.error('WebSocket error:', error);
+          setIsConnected(false);
+        };
+
+        ws.onclose = () => {
+          console.log('WebSocket disconnected');
+          setIsConnected(false);
+          wsRef.current = null;
+
+          // Exponential backoff reconnection
+          if (reconnectAttempts < maxReconnectAttempts && streamActive) {
+            const delay = Math.min(baseReconnectDelay * Math.pow(2, reconnectAttempts), 30000);
+            reconnectAttempts++;
+            console.log(`Reconnecting in ${delay}ms (attempt ${reconnectAttempts})`);
+            reconnectTimeoutRef.current = setTimeout(connectWebSocket, delay);
+          }
+        };
+      } catch (error) {
+        console.error('Failed to create WebSocket connection:', error);
+        setIsConnected(false);
+      }
+    };
+
+    connectWebSocket();
+
+    return () => {
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+      }
+      if (wsRef.current) {
+        wsRef.current.close();
+      }
+    };
+  }, [wsEndpoint, streamActive, selectedMachineId]);
+
+  // Mock telemetry update (since processed events don't contain raw data)
+  // In production, you'd fetch raw telemetry from REST API or have it sent via WebSocket
+  useEffect(() => {
+    if (!streamActive || !isConnected) return;
+
+    const interval = setInterval(() => {
+      const now = new Date();
+      const timeStr = now.toTimeString().split(' ')[0] ?? '00:00:00';
+
+      setMachines((prevMachines) =>
+        prevMachines.map((m) => {
+          const lastPoint = m.telemetry[m.telemetry.length - 1]!;
+          const jitterMult = m.status === 'CRITICAL' ? 2.5 : m.status === 'WARNING' ? 1.4 : 0.6;
+
+          const distanceNoise = (Math.random() - 0.5) * 5 * jitterMult;
+          const currentNoise = (Math.random() - 0.5) * 0.3 * jitterMult;
+          const rpmNoise = (Math.random() - 0.5) * 30 * jitterMult;
+          const pwmNoise = (Math.random() - 0.5) * 5 * jitterMult;
+
+          const newPoint: TelemetryPoint = {
+            time: timeStr,
+            distance_cm: Math.max(0, +(lastPoint.distance_cm + distanceNoise).toFixed(1)),
+            current_a: Math.max(0, +(lastPoint.current_a + currentNoise).toFixed(2)),
+            rpm: Math.max(0, Math.round(lastPoint.rpm + rpmNoise)),
+            mode: lastPoint.mode,
+            pwm_command: Math.max(0, Math.min(255, Math.round(lastPoint.pwm_command + pwmNoise))),
+          };
+
+          // Keep buffer at ~300 points
+          const nextTelemetry = [...m.telemetry.slice(-299), newPoint];
+
+          let newStatus = m.status;
+          if (newPoint.current_a > 5.0 || newPoint.rpm < 100) {
+            newStatus = 'CRITICAL';
+          } else if (newPoint.current_a > 3.5 || newPoint.rpm < 500) {
+            newStatus = 'WARNING';
+          } else {
+            newStatus = 'NOMINAL';
+          }
+
+          return {
+            ...m,
+            status: newStatus,
+            telemetry: nextTelemetry,
+          };
+        })
+      );
+    }, 100); // 10Hz max update rate
+
+    return () => clearInterval(interval);
+  }, [streamActive, isConnected]);
 
   // Sync dark class to DOM root
   useEffect(() => {
@@ -762,7 +953,7 @@ export default function IndustrialDoctorApp(): ReactElement {
     return machines.find((m: MachineUnit) => m.id === selectedMachineId) ?? machines[0]!;
   }, [machines, selectedMachineId]);
 
-  // Mock Streaming Loop
+  // Mock Streaming Loop (for logs only - telemetry comes from WebSocket)
   useEffect(() => {
     if (!streamActive) return;
 
@@ -772,47 +963,6 @@ export default function IndustrialDoctorApp(): ReactElement {
       const ms = String(now.getMilliseconds()).padStart(3, '0');
       const timestampWithMs = `${timeStr}.${ms}`;
 
-      setMachines((prevMachines: readonly MachineUnit[]) =>
-        prevMachines.map((m: MachineUnit) => {
-          const lastPoint = m.telemetry[m.telemetry.length - 1]!;
-          const jitterMult = m.status === 'CRITICAL' ? 2.5 : m.status === 'WARNING' ? 1.4 : 0.6;
-
-          const rpmNoise = (Math.random() - 0.49) * 22 * jitterMult;
-          const tempDrift = (Math.random() - 0.48) * 0.4 * jitterMult;
-          const vibJitter = (Math.random() - 0.47) * 0.15 * jitterMult;
-          const pressJitter = (Math.random() - 0.5) * 2.2 * jitterMult;
-          const acousticJitter = (Math.random() - 0.48) * 1.5 * jitterMult;
-          const kwJitter = (Math.random() - 0.5) * 1.2 * jitterMult;
-
-          const newPoint: TelemetryPoint = {
-            time: timeStr,
-            rpm: Math.max(0, Math.round(lastPoint.rpm + rpmNoise)),
-            bearingTemp: +(lastPoint.bearingTemp + tempDrift).toFixed(1),
-            vibrationRms: +Math.max(0.1, lastPoint.vibrationRms + vibJitter).toFixed(2),
-            hydraulicPressure: Math.max(5, Math.round(lastPoint.hydraulicPressure + pressJitter)),
-            acousticEmission: Math.max(20, Math.round(lastPoint.acousticEmission + acousticJitter)),
-            powerDraw: +Math.max(0, lastPoint.powerDraw + kwJitter).toFixed(1),
-          };
-
-          const nextTelemetry = [...m.telemetry.slice(1), newPoint];
-
-          let newStatus = m.status;
-          if (newPoint.bearingTemp > 94 || newPoint.vibrationRms > 7.5) {
-            newStatus = 'CRITICAL';
-          } else if (newPoint.bearingTemp > 72 || newPoint.vibrationRms > 4.0) {
-            newStatus = 'WARNING';
-          }
-
-          return {
-            ...m,
-            status: newStatus,
-            telemetry: nextTelemetry,
-          };
-        })
-      );
-
-      setPacketCount((c: number) => c + 1);
-
       if (Math.random() > 0.65) {
         const randomMachine = machines[Math.floor(Math.random() * machines.length)]!;
         const possibleLogs: {
@@ -821,29 +971,29 @@ export default function IndustrialDoctorApp(): ReactElement {
           msg: string;
           trigger?: string;
         }[] = [
-          { level: 'INFO', sub: 'THERMAL_LOOP', msg: 'Secondary heat exchanger loop flow confirmed 42 L/min.' },
-          { level: 'DEBUG', sub: 'POWERTRAIN', msg: 'Resolver zero-pulse synced to quadrature encoder channel B.' },
+          { level: 'INFO', sub: 'THERMAL_LOOP', msg: 'Motor temperature within normal operating range.' },
+          { level: 'DEBUG', sub: 'POWER_TRAIN', msg: 'Motor encoder sync confirmed.' },
           {
             level: 'WARN',
-            sub: 'BEARING_CAGE',
-            msg: 'High-frequency crest factor elevated above ISO threshold (CF=4.6).',
-            trigger: 'CF=4.6 > 3.8',
+            sub: 'DRIVETRAIN',
+            msg: 'Current/RPM ratio elevated above baseline.',
+            trigger: 'CURRENT_RPM_RATIO=1.26',
           },
           {
             level: 'INFO',
-            sub: 'LUBRICATION',
-            msg: 'Lubrication pump intermittent purge cycle finished (350ml dispensed).',
+            sub: 'MOTOR_ASSEMBLY',
+            msg: 'PWM command response nominal.',
           },
           {
             level: 'CRIT',
-            sub: 'PNEUMATICS',
-            msg: 'Emergency accumulator relief bypass valve high-differential trigger.',
-            trigger: 'ACCUM_DIFF=14.2 bar',
+            sub: 'ULTRASONIC_ARRAY',
+            msg: 'Distance sensor reading out of range.',
+            trigger: 'DISTANCE_CM=450cm',
           },
           {
             level: 'DEBUG',
             sub: 'VISION_INSPECT',
-            msg: 'In-line thermal vision matrix confirms thermal gradient uniformity.',
+            msg: 'Visual inspection feed nominal.',
           },
         ];
         const picked = possibleLogs[Math.floor(Math.random() * possibleLogs.length)]!;
@@ -860,35 +1010,17 @@ export default function IndustrialDoctorApp(): ReactElement {
 
         setLogs((prev: readonly LogEntry[]) => [newLogEntry, ...prev.slice(0, 79)]);
       }
-    }, streamIntervalMs);
+    }, 2500);
 
     return () => clearInterval(interval);
-  }, [streamActive, streamIntervalMs, machines]);
+  }, [streamActive, machines]);
 
-  // Trigger AI Audit Simulation
+  // Trigger AI Audit Simulation (placeholder - real diagnosis comes from WebSocket)
   const triggerManualDiagnostics = (): void => {
     setAiAnalysisRunning(true);
+    // In real implementation, this would send a request to backend to trigger investigation
+    // For now, we'll simulate after a delay
     setTimeout(() => {
-      const nowStr = new Date().toISOString().replace('T', ' ').substring(0, 19) + ' UTC';
-      const lastPoint = currentMachine.telemetry[currentMachine.telemetry.length - 1]!;
-      const newDiag: DiagnosticFinding = {
-        id: `DIAG-${Math.floor(1000 + Math.random() * 9000)}`,
-        timestamp: nowStr,
-        machineId: currentMachine.id,
-        severity: currentMachine.status === 'CRITICAL' ? 'HIGH' : 'MEDIUM',
-        confidence: +(0.86 + Math.random() * 0.11).toFixed(2),
-        title: `Dynamic Telemetry Pattern Correlated: ${currentMachine.name}`,
-        rootCauseHypothesis: `Harmonic signature resonance detected across ${currentMachine.tag} rotating elements. Vibration RMS (${lastPoint.vibrationRms} mm/s) coupling with bearing housing temperature ramp.`,
-        evidencePoints: [
-          `FFT fundamental frequency tracking correlates with ${lastPoint.rpm} RPM operational shaft speed`,
-          `Current bearing temp ${lastPoint.bearingTemp} °C exceeds steady-state regression curve by +14.2%`,
-          `Sensor packet continuity verified across 100% of samples (no lost frame drops)`,
-        ],
-        recommendedAction:
-          'Engage mechanical maintenance crew for laser alignment and grease pack replenishment on drive-end bearing. Verify seal integrity.',
-        status: 'PENDING_ACK',
-      };
-      setFindings((prev: readonly DiagnosticFinding[]) => [newDiag, ...prev]);
       setAiAnalysisRunning(false);
       setActiveTab('DIAGNOSTICS');
     }, 1200);
@@ -931,12 +1063,12 @@ export default function IndustrialDoctorApp(): ReactElement {
         setDarkMode={setDarkMode}
         streamActive={streamActive}
         setStreamActive={setStreamActive}
-        streamIntervalMs={streamIntervalMs}
         packetCount={packetCount}
         activeAlertCount={activeAlertCount}
         aiAnalysisRunning={aiAnalysisRunning}
         triggerManualDiagnostics={triggerManualDiagnostics}
         onOpenIoConfig={() => setShowConfigModal(true)}
+        isConnected={isConnected}
       />
 
       {/* 2. Main Dashboard Content Views */}
@@ -1175,22 +1307,130 @@ export default function IndustrialDoctorApp(): ReactElement {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
-                    {/* Channel 1: RPM */}
+                    {/* Channel 1: Distance */}
                     <tr className="hover:bg-zinc-50 dark:hover:bg-zinc-800/40">
-                      <td className="py-2.5 px-3 font-semibold text-zinc-700 dark:text-zinc-300">SIG-01.RPM</td>
+                      <td className="py-2.5 px-3 font-semibold text-zinc-700 dark:text-zinc-300">SIG-01.DIST</td>
                       <td className="py-2.5 px-3">
-                        <div className="font-semibold text-zinc-900 dark:text-zinc-100">Shaft Rotational Speed</div>
-                        <div className="text-[10px] text-zinc-400">Primary drive optical quadrature encoder</div>
+                        <div className="font-semibold text-zinc-900 dark:text-zinc-100">Ultrasonic Distance</div>
+                        <div className="text-[10px] text-zinc-400">Front-facing ultrasonic range sensor</div>
                       </td>
                       <td className="py-2.5 px-3 text-sm font-bold text-zinc-900 dark:text-zinc-100">
-                        {currentLatestPoint.rpm}
+                        {currentLatestPoint.distance_cm}
+                        <span className="text-zinc-400 text-xs ml-1 font-normal">cm</span>
+                      </td>
+                      <td className="py-2.5 px-3 text-zinc-600 dark:text-zinc-400 text-[11px]">Range: 2-400 cm</td>
+                      <td className="py-2.5 px-3">
+                        <SvgSparkline
+                          data={currentMachine.telemetry.map((p: TelemetryPoint) => p.distance_cm)}
+                          color={highlightMetrics.includes('distance_cm') ? '#d97706' : '#2563eb'}
+                          height={28}
+                          width={190}
+                          fill
+                          showMinMax
+                          unit="cm"
+                        />
+                      </td>
+                      <td className="py-2.5 px-3">
+                        {highlightMetrics.includes('distance_cm') ? (
+                          <span className="text-amber-700 dark:text-amber-400 font-bold text-[11px]">INVESTIGATING</span>
+                        ) : (
+                          <span className="text-emerald-700 dark:text-emerald-400 text-[11px] font-semibold">NOMINAL</span>
+                        )}
+                      </td>
+                    </tr>
+
+                    {/* Channel 2: Current */}
+                    <tr className="hover:bg-zinc-50 dark:hover:bg-zinc-800/40">
+                      <td className="py-2.5 px-3 font-semibold text-zinc-700 dark:text-zinc-300">SIG-02.CURR</td>
+                      <td className="py-2.5 px-3">
+                        <div className="font-semibold text-zinc-900 dark:text-zinc-100">Motor Current</div>
+                        <div className="text-[10px] text-zinc-400">DC motor current draw sensor</div>
+                      </td>
+                      <td className="py-2.5 px-3 text-sm font-bold">
+                        <span
+                          className={
+                            currentLatestPoint.current_a > 5.0
+                              ? 'text-red-700 dark:text-red-400'
+                              : currentLatestPoint.current_a > 3.5
+                              ? 'text-amber-700 dark:text-amber-400'
+                              : 'text-zinc-900 dark:text-zinc-100'
+                          }
+                        >
+                          {currentLatestPoint.current_a}
+                        </span>
+                        <span className="text-zinc-400 text-xs ml-1 font-normal">A</span>
+                      </td>
+                      <td className="py-2.5 px-3 text-zinc-600 dark:text-zinc-400 text-[11px]">
+                        Warn &gt; 3.5A | Crit &gt; 5.0A
+                      </td>
+                      <td className="py-2.5 px-3">
+                        <SvgSparkline
+                          data={currentMachine.telemetry.map((p: TelemetryPoint) => p.current_a)}
+                          color={
+                            highlightMetrics.includes('current_a')
+                              ? '#d97706'
+                              : currentLatestPoint.current_a > 5.0
+                              ? '#dc2626'
+                              : currentLatestPoint.current_a > 3.5
+                              ? '#d97706'
+                              : '#059669'
+                          }
+                          height={28}
+                          width={190}
+                          fill
+                          showMinMax
+                          unit="A"
+                        />
+                      </td>
+                      <td className="py-2.5 px-3">
+                        {highlightMetrics.includes('current_a') ? (
+                          <span className="text-amber-700 dark:text-amber-400 font-bold text-[11px]">INVESTIGATING</span>
+                        ) : currentLatestPoint.current_a > 5.0 ? (
+                          <span className="text-red-700 dark:text-red-400 font-bold text-[11px]">OVERLOAD</span>
+                        ) : currentLatestPoint.current_a > 3.5 ? (
+                          <span className="text-amber-700 dark:text-amber-400 font-semibold text-[11px]">ELEVATED</span>
+                        ) : (
+                          <span className="text-emerald-700 dark:text-emerald-400 font-semibold text-[11px]">NOMINAL</span>
+                        )}
+                      </td>
+                    </tr>
+
+                    {/* Channel 3: RPM */}
+                    <tr className="hover:bg-zinc-50 dark:hover:bg-zinc-800/40">
+                      <td className="py-2.5 px-3 font-semibold text-zinc-700 dark:text-zinc-300">SIG-03.RPM</td>
+                      <td className="py-2.5 px-3">
+                        <div className="font-semibold text-zinc-900 dark:text-zinc-100">Motor RPM</div>
+                        <div className="text-[10px] text-zinc-400">Optical encoder speed feedback</div>
+                      </td>
+                      <td className="py-2.5 px-3 text-sm font-bold">
+                        <span
+                          className={
+                            currentLatestPoint.rpm < 100
+                              ? 'text-red-700 dark:text-red-400'
+                              : currentLatestPoint.rpm < 500
+                              ? 'text-amber-700 dark:text-amber-400'
+                              : 'text-zinc-900 dark:text-zinc-100'
+                          }
+                        >
+                          {currentLatestPoint.rpm}
+                        </span>
                         <span className="text-zinc-400 text-xs ml-1 font-normal">RPM</span>
                       </td>
-                      <td className="py-2.5 px-3 text-zinc-600 dark:text-zinc-400 text-[11px]">Target ± 5.0%</td>
+                      <td className="py-2.5 px-3 text-zinc-600 dark:text-zinc-400 text-[11px]">
+                        Warn &lt; 500 | Crit &lt; 100
+                      </td>
                       <td className="py-2.5 px-3">
                         <SvgSparkline
                           data={currentMachine.telemetry.map((p: TelemetryPoint) => p.rpm)}
-                          color="#2563eb"
+                          color={
+                            highlightMetrics.includes('rpm')
+                              ? '#d97706'
+                              : currentLatestPoint.rpm < 100
+                              ? '#dc2626'
+                              : currentLatestPoint.rpm < 500
+                              ? '#d97706'
+                              : '#2563eb'
+                          }
                           height={28}
                           width={190}
                           fill
@@ -1199,197 +1439,62 @@ export default function IndustrialDoctorApp(): ReactElement {
                         />
                       </td>
                       <td className="py-2.5 px-3">
-                        <span className="text-emerald-700 dark:text-emerald-400 text-[11px] font-semibold">SYNCHRONOUS</span>
-                      </td>
-                    </tr>
-
-                    {/* Channel 2: Bearing Temp */}
-                    <tr className="hover:bg-zinc-50 dark:hover:bg-zinc-800/40">
-                      <td className="py-2.5 px-3 font-semibold text-zinc-700 dark:text-zinc-300">SIG-02.TEMP</td>
-                      <td className="py-2.5 px-3">
-                        <div className="font-semibold text-zinc-900 dark:text-zinc-100">Drive-End Bearing Temp</div>
-                        <div className="text-[10px] text-zinc-400">Class A PT100 RTD embedded probe</div>
-                      </td>
-                      <td className="py-2.5 px-3 text-sm font-bold">
-                        <span
-                          className={
-                            currentLatestPoint.bearingTemp > 85
-                              ? 'text-red-700 dark:text-red-400'
-                              : currentLatestPoint.bearingTemp > 70
-                              ? 'text-amber-700 dark:text-amber-400'
-                              : 'text-zinc-900 dark:text-zinc-100'
-                          }
-                        >
-                          {currentLatestPoint.bearingTemp}
-                        </span>
-                        <span className="text-zinc-400 text-xs ml-1 font-normal">°C</span>
-                      </td>
-                      <td className="py-2.5 px-3 text-zinc-600 dark:text-zinc-400 text-[11px]">
-                        Warn &gt; 70.0 | Crit &gt; 85.0
-                      </td>
-                      <td className="py-2.5 px-3">
-                        <SvgSparkline
-                          data={currentMachine.telemetry.map((p: TelemetryPoint) => p.bearingTemp)}
-                          color={
-                            currentLatestPoint.bearingTemp > 85
-                              ? '#dc2626'
-                              : currentLatestPoint.bearingTemp > 70
-                              ? '#d97706'
-                              : '#059669'
-                          }
-                          height={28}
-                          width={190}
-                          fill
-                          showMinMax
-                          unit="°C"
-                        />
-                      </td>
-                      <td className="py-2.5 px-3">
-                        {currentLatestPoint.bearingTemp > 85 ? (
-                          <span className="text-red-700 dark:text-red-400 font-bold text-[11px]">Thermal Alarm</span>
-                        ) : currentLatestPoint.bearingTemp > 70 ? (
-                          <span className="text-amber-700 dark:text-amber-400 font-semibold text-[11px]">ELEVATED</span>
+                        {highlightMetrics.includes('rpm') ? (
+                          <span className="text-amber-700 dark:text-amber-400 font-bold text-[11px]">INVESTIGATING</span>
+                        ) : currentLatestPoint.rpm < 100 ? (
+                          <span className="text-red-700 dark:text-red-400 font-bold text-[11px]">STALL</span>
+                        ) : currentLatestPoint.rpm < 500 ? (
+                          <span className="text-amber-700 dark:text-amber-400 font-semibold text-[11px]">LOW SPEED</span>
                         ) : (
-                          <span className="text-emerald-700 dark:text-emerald-400 font-semibold text-[11px]">OPTIMAL</span>
+                          <span className="text-emerald-700 dark:text-emerald-400 font-semibold text-[11px]">NOMINAL</span>
                         )}
                       </td>
                     </tr>
 
-                    {/* Channel 3: Vibration RMS */}
+                    {/* Channel 4: Mode */}
                     <tr className="hover:bg-zinc-50 dark:hover:bg-zinc-800/40">
-                      <td className="py-2.5 px-3 font-semibold text-zinc-700 dark:text-zinc-300">SIG-03.VIB</td>
+                      <td className="py-2.5 px-3 font-semibold text-zinc-700 dark:text-zinc-300">SIG-04.MODE</td>
                       <td className="py-2.5 px-3">
-                        <div className="font-semibold text-zinc-900 dark:text-zinc-100">Triaxial Vibration RMS</div>
-                        <div className="text-[10px] text-zinc-400">Piezoelectric accelerometer 10-1000Hz (ISO 10816-3)</div>
-                      </td>
-                      <td className="py-2.5 px-3 text-sm font-bold">
-                        <span
-                          className={
-                            currentLatestPoint.vibrationRms > 6.0
-                              ? 'text-red-700 dark:text-red-400'
-                              : currentLatestPoint.vibrationRms > 3.5
-                              ? 'text-amber-700 dark:text-amber-400'
-                              : 'text-zinc-900 dark:text-zinc-100'
-                          }
-                        >
-                          {currentLatestPoint.vibrationRms}
-                        </span>
-                        <span className="text-zinc-400 text-xs ml-1 font-normal">mm/s</span>
-                      </td>
-                      <td className="py-2.5 px-3 text-zinc-600 dark:text-zinc-400 text-[11px]">
-                        ISO Alert &gt; 3.50 | Trip &gt; 7.10
-                      </td>
-                      <td className="py-2.5 px-3">
-                        <SvgSparkline
-                          data={currentMachine.telemetry.map((p: TelemetryPoint) => p.vibrationRms)}
-                          color={
-                            currentLatestPoint.vibrationRms > 6.0
-                              ? '#dc2626'
-                              : currentLatestPoint.vibrationRms > 3.5
-                              ? '#d97706'
-                              : '#2563eb'
-                          }
-                          height={28}
-                          width={190}
-                          fill
-                          showMinMax
-                          unit="mm/s"
-                        />
-                      </td>
-                      <td className="py-2.5 px-3">
-                        {currentLatestPoint.vibrationRms > 6.0 ? (
-                          <span className="text-red-700 dark:text-red-400 font-bold text-[11px]">Harmonic Fault</span>
-                        ) : currentLatestPoint.vibrationRms > 3.5 ? (
-                          <span className="text-amber-700 dark:text-amber-400 font-semibold text-[11px]">High Restrict</span>
-                        ) : (
-                          <span className="text-emerald-700 dark:text-emerald-400 font-semibold text-[11px]">Zone A Accept</span>
-                        )}
-                      </td>
-                    </tr>
-
-                    {/* Channel 4: Hydraulic Pressure */}
-                    <tr className="hover:bg-zinc-50 dark:hover:bg-zinc-800/40">
-                      <td className="py-2.5 px-3 font-semibold text-zinc-700 dark:text-zinc-300">SIG-04.HYD</td>
-                      <td className="py-2.5 px-3">
-                        <div className="font-semibold text-zinc-900 dark:text-zinc-100">Main Hydraulic Loop Pressure</div>
-                        <div className="text-[10px] text-zinc-400">Piezoresistive pressure transducer 0-350 bar</div>
+                        <div className="font-semibold text-zinc-900 dark:text-zinc-100">Operating Mode</div>
+                        <div className="text-[10px] text-zinc-400">Motor control mode state</div>
                       </td>
                       <td className="py-2.5 px-3 text-sm font-bold text-zinc-900 dark:text-zinc-100">
-                        {currentLatestPoint.hydraulicPressure}
-                        <span className="text-zinc-400 text-xs ml-1 font-normal">bar</span>
+                        {currentLatestPoint.mode}
                       </td>
-                      <td className="py-2.5 px-3 text-zinc-600 dark:text-zinc-400 text-[11px]">Nominal 140 - 240 bar</td>
+                      <td className="py-2.5 px-3 text-zinc-600 dark:text-zinc-400 text-[11px]">forward, idle, reverse</td>
+                      <td className="py-2.5 px-3">
+                        <div className="text-[10px] text-zinc-400 font-mono">State: {currentLatestPoint.mode.toUpperCase()}</div>
+                      </td>
+                      <td className="py-2.5 px-3">
+                        <span className="text-emerald-700 dark:text-emerald-400 text-[11px] font-semibold">ACTIVE</span>
+                      </td>
+                    </tr>
+
+                    {/* Channel 5: PWM Command */}
+                    <tr className="hover:bg-zinc-50 dark:hover:bg-zinc-800/40">
+                      <td className="py-2.5 px-3 font-semibold text-zinc-700 dark:text-zinc-300">SIG-05.PWM</td>
+                      <td className="py-2.5 px-3">
+                        <div className="font-semibold text-zinc-900 dark:text-zinc-100">PWM Command</div>
+                        <div className="text-[10px] text-zinc-400">Motor driver PWM signal (0-255)</div>
+                      </td>
+                      <td className="py-2.5 px-3 text-sm font-bold text-zinc-900 dark:text-zinc-100">
+                        {currentLatestPoint.pwm_command}
+                        <span className="text-zinc-400 text-xs ml-1 font-normal">/255</span>
+                      </td>
+                      <td className="py-2.5 px-3 text-zinc-600 dark:text-zinc-400 text-[11px]">Range: 0-255</td>
                       <td className="py-2.5 px-3">
                         <SvgSparkline
-                          data={currentMachine.telemetry.map((p: TelemetryPoint) => p.hydraulicPressure)}
+                          data={currentMachine.telemetry.map((p: TelemetryPoint) => p.pwm_command)}
                           color="#475569"
                           height={28}
                           width={190}
                           fill
                           showMinMax
-                          unit="bar"
+                          unit=""
                         />
                       </td>
                       <td className="py-2.5 px-3">
-                        <span className="text-zinc-700 dark:text-zinc-300 text-[11px] font-semibold">Pressure Lock</span>
-                      </td>
-                    </tr>
-
-                    {/* Channel 5: Acoustic Ultrasound */}
-                    <tr className="hover:bg-zinc-50 dark:hover:bg-zinc-800/40">
-                      <td className="py-2.5 px-3 font-semibold text-zinc-700 dark:text-zinc-300">SIG-05.AE</td>
-                      <td className="py-2.5 px-3">
-                        <div className="font-semibold text-zinc-900 dark:text-zinc-100">Acoustic Ultrasound Emission</div>
-                        <div className="text-[10px] text-zinc-400">Contact ultrasonic resonance sensor (20-100 kHz)</div>
-                      </td>
-                      <td className="py-2.5 px-3 text-sm font-bold text-zinc-900 dark:text-zinc-100">
-                        {currentLatestPoint.acousticEmission}
-                        <span className="text-zinc-400 text-xs ml-1 font-normal">dBμV</span>
-                      </td>
-                      <td className="py-2.5 px-3 text-zinc-600 dark:text-zinc-400 text-[11px]">
-                        Baseline + 18 dB threshold
-                      </td>
-                      <td className="py-2.5 px-3">
-                        <SvgSparkline
-                          data={currentMachine.telemetry.map((p: TelemetryPoint) => p.acousticEmission)}
-                          color="#059669"
-                          height={28}
-                          width={190}
-                          fill
-                          showMinMax
-                          unit="dB"
-                        />
-                      </td>
-                      <td className="py-2.5 px-3">
-                        <span className="text-emerald-700 dark:text-emerald-400 text-[11px] font-semibold">Normal Decibel</span>
-                      </td>
-                    </tr>
-
-                    {/* Channel 6: Electrical Power */}
-                    <tr className="hover:bg-zinc-50 dark:hover:bg-zinc-800/40">
-                      <td className="py-2.5 px-3 font-semibold text-zinc-700 dark:text-zinc-300">SIG-06.POW</td>
-                      <td className="py-2.5 px-3">
-                        <div className="font-semibold text-zinc-900 dark:text-zinc-100">True Active Power Draw</div>
-                        <div className="text-[10px] text-zinc-400">3-Phase Hall effect power analyzer meter</div>
-                      </td>
-                      <td className="py-2.5 px-3 text-sm font-bold text-zinc-900 dark:text-zinc-100">
-                        {currentLatestPoint.powerDraw}
-                        <span className="text-zinc-400 text-xs ml-1 font-normal">kW</span>
-                      </td>
-                      <td className="py-2.5 px-3 text-zinc-600 dark:text-zinc-400 text-[11px]">Efficiency cosφ = 0.92</td>
-                      <td className="py-2.5 px-3">
-                        <SvgSparkline
-                          data={currentMachine.telemetry.map((p: TelemetryPoint) => p.powerDraw)}
-                          color="#2563eb"
-                          height={28}
-                          width={190}
-                          fill
-                          showMinMax
-                          unit="kW"
-                        />
-                      </td>
-                      <td className="py-2.5 px-3">
-                        <span className="text-blue-700 dark:text-blue-400 text-[11px] font-semibold">Grid Sync</span>
+                        <span className="text-zinc-700 dark:text-zinc-300 text-[11px] font-semibold">COMMAND SENT</span>
                       </td>
                     </tr>
                   </tbody>
@@ -1423,12 +1528,16 @@ export default function IndustrialDoctorApp(): ReactElement {
                   </div>
 
                   <div className="relative z-10 my-auto flex flex-col items-center justify-center">
-                    <div className="w-28 h-20 border-2 border-dashed border-amber-500 bg-amber-500/10 flex flex-col justify-between p-1">
-                      <span className="text-[9px] text-amber-400 bg-black/70 px-1 self-start">Defect Detection Region</span>
-                      <span className="text-[8px] text-amber-300 self-end font-mono">CONF: 91.2%</span>
+                    <div className={`w-28 h-20 border-2 ${anomalyDetected ? 'border-red-500 bg-red-500/20' : 'border-amber-500 bg-amber-500/10'} flex flex-col justify-between p-1 ${anomalyDetected ? 'animate-pulse' : ''}`}>
+                      <span className={`text-[9px] ${anomalyDetected ? 'text-red-400' : 'text-amber-400'} bg-black/70 px-1 self-start`}>
+                        {anomalyDetected ? 'ANOMALY DETECTED' : 'Defect Detection Region'}
+                      </span>
+                      <span className={`text-[8px] ${anomalyDetected ? 'text-red-300' : 'text-amber-300'} self-end font-mono`}>
+                        CONF: {anomalyDetected ? (currentDiagnosis?.confidence ? `${(currentDiagnosis.confidence * 100).toFixed(1)}%` : 'HIGH') : '91.2%'}
+                      </span>
                     </div>
                     <span className="text-[10px] text-zinc-300 mt-2 bg-black/75 px-1.5 py-0.5">
-                      TARGET: Spindle Housing Chamfer
+                      TARGET: {anomalyDetected && currentDiagnosis?.diagnosis ? currentDiagnosis.diagnosis.substring(0, 30) + '...' : 'RC Car Front Chassis'}
                     </span>
                   </div>
 
@@ -1453,55 +1562,55 @@ export default function IndustrialDoctorApp(): ReactElement {
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs font-mono">
                   <div className="border border-zinc-200 dark:border-zinc-800 p-2.5 bg-zinc-50/50 dark:bg-zinc-950/40">
                     <div className="flex justify-between items-center mb-1">
-                      <span className="font-bold text-zinc-800 dark:text-zinc-200">Bearing Assembly</span>
+                      <span className="font-bold text-zinc-800 dark:text-zinc-200">Drivetrain Health</span>
                       <span className="text-amber-700 dark:text-amber-400 font-bold">WEAR: 24%</span>
                     </div>
                     <div className="w-full bg-zinc-200 dark:bg-zinc-800 h-1.5 rounded-none overflow-hidden mb-1.5">
                       <div className="bg-amber-600 h-full" style={{ width: '24%' }} />
                     </div>
                     <div className="text-[10px] text-zinc-500">
-                      RUL (Remaining Useful Life): ~480 operating hours. Outer ring fatigue signature tracked.
+                      RUL (Remaining Useful Life): ~480 operating cycles. Gear mesh wear tracked.
                     </div>
                   </div>
 
                   <div className="border border-zinc-200 dark:border-zinc-800 p-2.5 bg-zinc-50/50 dark:bg-zinc-950/40">
                     <div className="flex justify-between items-center mb-1">
-                      <span className="font-bold text-zinc-800 dark:text-zinc-200">Lubrication Quality</span>
+                      <span className="font-bold text-zinc-800 dark:text-zinc-200">Motor Assembly</span>
                       <span className="text-emerald-700 dark:text-emerald-400 font-bold">
-                        {currentMachine.oilViscosity} cSt (NOMINAL)
+                        {currentLatestPoint.current_a < 3.5 ? 'NOMINAL' : 'ELEVATED'}
                       </span>
                     </div>
                     <div className="w-full bg-zinc-200 dark:bg-zinc-800 h-1.5 rounded-none overflow-hidden mb-1.5">
-                      <div className="bg-emerald-600 h-full" style={{ width: '88%' }} />
+                      <div className="bg-emerald-600 h-full" style={{ width: currentLatestPoint.current_a < 3.5 ? '88%' : '65%' }} />
                     </div>
                     <div className="text-[10px] text-zinc-500">
-                      Moisture content &lt; 45 ppm. ISO 4406 Cleanliness rating: 16/14/11.
+                      Current draw within operational parameters. Thermal efficiency nominal.
                     </div>
                   </div>
 
                   <div className="border border-zinc-200 dark:border-zinc-800 p-2.5 bg-zinc-50/50 dark:bg-zinc-950/40">
                     <div className="flex justify-between items-center mb-1">
-                      <span className="font-bold text-zinc-800 dark:text-zinc-200">Seal Integrity</span>
-                      <span className="text-emerald-700 dark:text-emerald-400 font-bold">96% EFFICIENCY</span>
+                      <span className="font-bold text-zinc-800 dark:text-zinc-200">Ultrasonic Array</span>
+                      <span className="text-emerald-700 dark:text-emerald-400 font-bold">96% ACCURACY</span>
                     </div>
                     <div className="w-full bg-zinc-200 dark:bg-zinc-800 h-1.5 rounded-none overflow-hidden mb-1.5">
                       <div className="bg-emerald-600 h-full" style={{ width: '96%' }} />
                     </div>
                     <div className="text-[10px] text-zinc-500">
-                      Zero continuous weepage. Bypass pressure relief threshold verified.
+                      Distance sensor readings stable. Signal-to-noise ratio within specification.
                     </div>
                   </div>
 
                   <div className="border border-zinc-200 dark:border-zinc-800 p-2.5 bg-zinc-50/50 dark:bg-zinc-950/40">
                     <div className="flex justify-between items-center mb-1">
-                      <span className="font-bold text-zinc-800 dark:text-zinc-200">Stator Insulation</span>
-                      <span className="text-emerald-700 dark:text-emerald-400 font-bold">&gt; 100 MΩ (CLASS F)</span>
+                      <span className="font-bold text-zinc-800 dark:text-zinc-200">Battery System</span>
+                      <span className="text-emerald-700 dark:text-emerald-400 font-bold">&gt; 85% CAPACITY</span>
                     </div>
                     <div className="w-full bg-zinc-200 dark:bg-zinc-800 h-1.5 rounded-none overflow-hidden mb-1.5">
                       <div className="bg-emerald-600 h-full" style={{ width: '92%' }} />
                     </div>
                     <div className="text-[10px] text-zinc-500">
-                      Partial discharge index within baseline tolerance. Megger testing verified.
+                      Discharge rate stable. Cell voltage balance within tolerance.
                     </div>
                   </div>
                 </div>
@@ -1510,22 +1619,22 @@ export default function IndustrialDoctorApp(): ReactElement {
                   <span className="text-zinc-500">Command Override:</span>
                   <div className="flex items-center gap-2">
                     <button
-                      onClick={() => alert(`[SCADA] Recalibration packet dispatched to ${currentMachine.id}`)}
-                      className="px-2 py-1 bg-zinc-200 dark:bg-zinc-800 hover:bg-zinc-300 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 border border-zinc-300 dark:border-zinc-700 rounded-none text-[11px]"
+                      onClick={() => alert(`[RC CONTROL] Emergency stop dispatched to ${currentMachine.id}`)}
+                      className="px-2 py-1 bg-red-100 dark:bg-red-900/30 hover:bg-red-200 dark:hover:bg-red-900/50 text-red-800 dark:text-red-300 border border-red-300 dark:border-red-700 rounded-none text-[11px]"
                     >
-                      Tare Accelerometers
+                      Emergency Stop
                     </button>
                     <button
-                      onClick={() => alert(`[SCADA] Oil purge cycle initiated for ${currentMachine.id}`)}
+                      onClick={() => alert(`[RC CONTROL] Calibrate sensors for ${currentMachine.id}`)}
                       className="px-2 py-1 bg-zinc-200 dark:bg-zinc-800 hover:bg-zinc-300 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 border border-zinc-300 dark:border-zinc-700 rounded-none text-[11px]"
                     >
-                      Purge Lubricant
+                      Calibrate Sensors
                     </button>
                     <button
                       onClick={triggerManualDiagnostics}
                       className="px-2.5 py-1 bg-blue-700 hover:bg-blue-800 text-white border border-blue-900 rounded-none text-[11px] font-semibold"
                     >
-                      Analyze Machine Anomalies
+                      Analyze Anomalies
                     </button>
                   </div>
                 </div>
@@ -1899,22 +2008,23 @@ export default function IndustrialDoctorApp(): ReactElement {
       <IoConfigModal
         isOpen={showConfigModal}
         onClose={() => setShowConfigModal(false)}
-        apiEndpoint={apiEndpoint}
-        setApiEndpoint={setApiEndpoint}
-        streamIntervalMs={streamIntervalMs}
-        setStreamIntervalMs={setStreamIntervalMs}
+        wsEndpoint={wsEndpoint}
+        setWsEndpoint={setWsEndpoint}
         streamActive={streamActive}
+        isConnected={isConnected}
       />
 
-      {/* 4. Industrial SCADA System Footer */}
+      {/* 4. RC Car Monitoring System Footer */}
       <footer className="border-t border-zinc-300 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-4 py-2 text-[10px] font-mono text-zinc-500 flex flex-wrap justify-between items-center gap-2">
         <div className="flex items-center gap-3">
-          <span>MachSight Industrial Doctor // Security Zone 3</span>
-          <span>COMPLIANCE: IEC 62443 / ISO 13374</span>
+          <span>MachSight RC Car Monitor // Test Track Zone A</span>
+          <span>PROTOCOL: WebSocket / FastAPI</span>
         </div>
         <div className="flex items-center gap-4">
-          <span>UTC Time: 2026-09-26 12:27:00</span>
-          <span className="text-emerald-700 dark:text-emerald-400 font-semibold">All Channels Active</span>
+          <span>UTC Time: {new Date().toISOString().replace('T', ' ').substring(0, 19)}</span>
+          <span className={isConnected ? 'text-emerald-700 dark:text-emerald-400' : 'text-amber-700 dark:text-amber-400'} font-semibold>
+            {isConnected ? 'WebSocket Connected' : 'WebSocket Disconnected'}
+          </span>
         </div>
       </footer>
     </div>

@@ -2,6 +2,6 @@ fastapi
 uvicorn
 websockets
 python-multipart
-numpy==2.5.3
-scipy==1.18.1
+numpy==2.4
+scipy==1.17
 httpx
