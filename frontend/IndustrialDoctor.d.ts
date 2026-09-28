@@ -4,7 +4,7 @@ export type DiagnosticSeverity = 'HIGH' | 'MEDIUM' | 'LOW';
 export type DiagnosticStatus = 'PENDING_ACK' | 'TRIAGED' | 'DISPATCHED' | 'RESOLVED';
 export type LogSeverity = 'DEBUG' | 'INFO' | 'WARN' | 'CRIT';
 export type SubsystemType = 'DRIVETRAIN' | 'MOTOR_ASSEMBLY' | 'ULTRASONIC_ARRAY' | 'POWER_TRAIN' | 'THERMAL_LOOP' | 'VISION_INSPECT';
-export type DashboardTab = 'LANDING' | 'OVERVIEW' | 'INSIGHTS' | 'DIAGNOSTICS' | 'LOGS';
+export type DashboardTab = 'LANDING' | 'OVERVIEW' | 'DIAGNOSTICS' | 'LOGS';
 export type LogFilterSeverity = 'ALL' | 'CRIT' | 'WARN';
 export interface TelemetryPoint {
     readonly time: string;
@@ -80,6 +80,7 @@ export interface MachineUnit {
     readonly lastAnomaly: string;
     readonly telemetry: readonly TelemetryPoint[];
     readonly activeAlertCount: number;
+    readonly connected: boolean;
 }
 export interface LogEntry {
     readonly id: string;
@@ -101,15 +102,8 @@ export interface DiagnosticFinding {
     readonly evidencePoints: readonly string[];
     readonly recommendedAction: string;
     readonly status: DiagnosticStatus;
-}
-export interface DefectFrequencyDefinition {
-    readonly faultType: string;
-    readonly acronym: string;
-    readonly orderMultiple: string;
-    readonly frequencyHz: number;
-    readonly measuredEnergyMmS: number;
-    readonly thresholdMmS: number;
-    readonly statusTag: 'ALERT_HIGH' | 'NOMINAL';
+    readonly stage?: 'preliminary' | 'final';
+    readonly traceId?: string;
 }
 export interface SvgSparklineProps {
     readonly data: readonly number[];
@@ -141,6 +135,8 @@ export interface HeaderProps {
     readonly triggerManualDiagnostics: () => void;
     readonly onOpenIoConfig: () => void;
     readonly isConnected: boolean;
+    readonly deviceConnected: boolean;
+    readonly onOpenDeviceDialog: () => void;
 }
 export interface IoConfigModalProps {
     readonly isOpen: boolean;
@@ -150,10 +146,17 @@ export interface IoConfigModalProps {
     readonly streamActive: boolean;
     readonly isConnected: boolean;
 }
+export interface DeviceConnectionDialogProps {
+    readonly isOpen: boolean;
+    readonly onClose: () => void;
+    readonly onConnect: (deviceId: string) => void;
+    readonly deviceConnected: boolean;
+}
 export declare function StatusBadge({ status }: StatusBadgeProps): ReactElement;
 export declare function LogLevelBadge({ level }: LogLevelBadgeProps): ReactElement;
 export declare function SvgSparkline({ data, color, height, width, minVal, maxVal, fill, showMinMax, unit, }: SvgSparklineProps): ReactElement;
-export declare function DashboardHeader({ activeTab, setActiveTab, darkMode, setDarkMode, streamActive, setStreamActive, packetCount, activeAlertCount, aiAnalysisRunning, triggerManualDiagnostics, onOpenIoConfig, isConnected, }: HeaderProps): ReactElement;
+export declare function DashboardHeader({ activeTab, setActiveTab, darkMode, setDarkMode, streamActive, setStreamActive, packetCount, activeAlertCount, aiAnalysisRunning, triggerManualDiagnostics, onOpenIoConfig, isConnected, deviceConnected, onOpenDeviceDialog, }: HeaderProps): ReactElement;
 export declare function IoConfigModal({ isOpen, onClose, wsEndpoint, setWsEndpoint, streamActive, isConnected, }: IoConfigModalProps): ReactElement | null;
+export declare function DeviceConnectionDialog({ isOpen, onClose, onConnect, deviceConnected, }: DeviceConnectionDialogProps): ReactElement | null;
 export default function IndustrialDoctorApp(): ReactElement;
 //# sourceMappingURL=IndustrialDoctor.d.ts.map
