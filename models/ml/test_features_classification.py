@@ -129,6 +129,91 @@ def test_jam_fault_classification(reference):
     assert "clear path" in matched_text or "distance" in matched_text
 
 
+def test_drag_data_does_not_trigger_jam(reference):
+    """Regression: drag telemetry must rank mechanical_drag first and obstruction_jam clearly lower.
+
+    Root cause of previous bug: jam used rpm_z <= -2.0 as its RPM gate, which drag data
+    easily satisfies even when RPM is ~200 (well above any physical stall threshold).
+    Fix: jam now requires physical wheel stall (rpm <= 15% of bucket baseline).
+    """
+    drag_rows = generate_mock_data(samples_per_bucket=20, fault="drag", seed=77)
+    # forward:200 bucket — baseline RPM ~305, stall threshold ~46 RPM
+    # Drag RPM: ~305 * 0.55-0.70 = ~168-213 RPM — wheel clearly still turning
+    forward_drag = [r for r in drag_rows if r["mode"] == "forward" and r["pwm_command"] == 200]
+
+    failures = []
+    for reading in forward_drag[:15]:
+        res = analyze(reading, recent_window=forward_drag[:8], reference=reference)
+        matches_by_fault = {m["fault"]: m["score"] for m in res["matches"]}
+        drag_score = matches_by_fault.get("mechanical_drag", 0.0)
+        jam_score = matches_by_fault.get("obstruction_jam", 0.0)
+
+        if drag_score <= jam_score:
+            failures.append(
+                f"drag_score={drag_score:.2f} <= jam_score={jam_score:.2f} "
+                f"for reading rpm={reading['rpm']:.1f} current={reading['current_a']:.3f}"
+            )
+        if jam_score > 0.3:
+            failures.append(
+                f"jam_score={jam_score:.2f} > 0.3 threshold on drag data "
+                f"(rpm={reading['rpm']:.1f})"
+            )
+
+    assert not failures, (
+        f"Drag data misclassified as jam in {len(failures)} readings:\n"
+        + "\n".join(failures)
+    )
+
+    # Confirm at least one reading ranks drag first with high confidence
+    top_drag_scores = []
+    for reading in forward_drag[:15]:
+        res = analyze(reading, recent_window=forward_drag[:8], reference=reference)
+        top_match = res["matches"][0]
+        if top_match["fault"] == "mechanical_drag":
+            top_drag_scores.append(top_match["score"])
+
+    assert len(top_drag_scores) >= 10, (
+        f"Only {len(top_drag_scores)}/15 drag readings ranked mechanical_drag first"
+    )
+    assert max(top_drag_scores) >= 0.70, (
+        f"Best drag score was only {max(top_drag_scores):.2f}, expected >= 0.70"
+    )
+
+
+def test_jam_data_does_not_trigger_drag(reference):
+    """Regression: jam telemetry must rank obstruction_jam first and mechanical_drag score 0.
+
+    Jam data has RPM near zero — the wheel is physically stalled. Drag requires the
+    wheel to still be turning, so drag score must be 0 for jam data.
+    """
+    jam_rows = generate_mock_data(samples_per_bucket=20, fault="jam", seed=88)
+    # forward:200 — jam RPM: 0–5, far below stall threshold (~46 RPM)
+    forward_jam = [r for r in jam_rows if r["mode"] == "forward" and r["pwm_command"] == 200]
+
+    failures = []
+    for reading in forward_jam[:15]:
+        res = analyze(reading, recent_window=forward_jam[:8], reference=reference)
+        matches_by_fault = {m["fault"]: m["score"] for m in res["matches"]}
+        drag_score = matches_by_fault.get("mechanical_drag", 0.0)
+        jam_score = matches_by_fault.get("obstruction_jam", 0.0)
+
+        if drag_score > 0.0:
+            failures.append(
+                f"drag_score={drag_score:.2f} > 0 on jam data "
+                f"(rpm={reading['rpm']:.1f}) — wheel stalled, drag should be excluded"
+            )
+        if jam_score < 0.70:
+            failures.append(
+                f"jam_score={jam_score:.2f} < 0.70 on jam data "
+                f"(rpm={reading['rpm']:.1f}, current={reading['current_a']:.3f})"
+            )
+
+    assert not failures, (
+        f"Jam data misclassified in {len(failures)} readings:\n"
+        + "\n".join(failures)
+    )
+
+
 def test_sensor_fault_out_of_range(reference):
     """Verifies that out-of-range ultrasonic readings classify as 'sensor_fault'."""
     sensor_rows = generate_mock_data(samples_per_bucket=10, fault="sensor_fault", seed=99)

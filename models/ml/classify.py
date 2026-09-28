@@ -92,6 +92,12 @@ def classify(
     rpm_val = float(processed.get("rpm", 0.0))
     pwm_val = int(processed.get("pwm_command", 0))
 
+    # Stall RPM threshold: 15% of the bucket RPM baseline (minimum 20 RPM).
+    # Below this the wheel is effectively locked (jam territory).
+    # Above this the wheel is still meaningfully turning (drag territory).
+    baseline_rpm = float(processed.get("baseline_rpm_mean", 0.0))
+    stall_rpm_threshold = max(20.0, baseline_rpm * 0.15)
+
     # -------------------------------------------------------------------------
     # 1. Fault Signature: mechanical_drag
     # -------------------------------------------------------------------------
@@ -104,12 +110,19 @@ def classify(
         else 0.0
     )
 
-    is_near_stall = (rpm_val <= 5.0 and current_z >= 3.0)
+    # Wheel must be physically turning (above stall threshold) for drag to apply.
+    # Near-stall means the wheel has effectively locked — that is jam, not drag.
+    is_near_stall = (rpm_val <= stall_rpm_threshold)
+    wheel_turning = not is_near_stall
 
-    if ratio_elevation_pct >= 30.0 and not is_near_stall:
+    if ratio_elevation_pct >= 30.0 and wheel_turning:
         drag_matched.append(
             f"Current/RPM ratio ({current_rpm_ratio:.4f}) is {ratio_elevation_pct:.1f}% "
             f"above bucket baseline ({baseline_ratio:.4f})"
+        )
+        drag_matched.append(
+            f"Wheel is still rotating ({rpm_val:.1f} RPM > stall threshold {stall_rpm_threshold:.1f} RPM), "
+            f"confirming friction drag rather than complete lockup"
         )
         if window and window.get("count", 0) >= 3:
             pct_anom = float(window.get("pct_anomalous", 0.0))
@@ -130,7 +143,8 @@ def classify(
         drag_score = 0.0
         if is_near_stall:
             drag_contradicting.append(
-                "Wheel RPM is near zero with extreme stall current, indicative of obstruction jam rather than drag friction"
+                f"Wheel RPM ({rpm_val:.1f} RPM) is at or below stall threshold ({stall_rpm_threshold:.1f} RPM) "
+                f"— indicative of complete lockup (obstruction jam) rather than friction drag"
             )
         else:
             drag_contradicting.append(
@@ -151,7 +165,13 @@ def classify(
     jam_contradicting: List[str] = []
 
     c_match = current_z >= 3.0
-    rpm_match = rpm_z <= -2.0
+    # Hard physical stall guard: wheel RPM must be physically near zero.
+    # A z-score alone is insufficient — drag also produces very low z-scores
+    # because its elevated ratio shifts RPM far from the baseline mean.
+    # Jam requires the wheel to be physically locked (below stall threshold).
+    rpm_physically_stalled = rpm_val <= stall_rpm_threshold
+    # Z-score confirms severity of the RPM drop (helps distinguish abrupt onset)
+    rpm_z_match = rpm_z <= -2.0
     # Clear path: distance >= 25 cm and plausible (not collision with wall)
     path_clear = dist_plausible and dist_val >= 25.0
 
@@ -164,13 +184,24 @@ def classify(
             f"Motor current z-score ({current_z:+.2f}) is below stall threshold (< 3.0)"
         )
 
-    if rpm_match:
+    if rpm_physically_stalled:
         jam_matched.append(
-            f"Wheel RPM z-score ({rpm_z:+.2f}) <= -2.0 indicates wheel lockup / near-zero rotation"
+            f"Wheel RPM ({rpm_val:.1f} RPM) is at or below stall threshold ({stall_rpm_threshold:.1f} RPM), "
+            f"indicating physical wheel lockup rather than mere RPM reduction"
         )
     else:
         jam_contradicting.append(
-            f"Wheel RPM z-score ({rpm_z:+.2f}) is above stall threshold (> -2.0)"
+            f"Wheel is still rotating at {rpm_val:.1f} RPM (above stall threshold {stall_rpm_threshold:.1f} RPM) — "
+            f"consistent with mechanical drag friction, not complete lockup / jam"
+        )
+
+    if rpm_z_match and rpm_physically_stalled:
+        jam_matched.append(
+            f"Wheel RPM z-score ({rpm_z:+.2f}) confirms severe RPM drop consistent with stall event"
+        )
+    elif rpm_z_match and not rpm_physically_stalled:
+        jam_contradicting.append(
+            f"RPM z-score ({rpm_z:+.2f}) is depressed due to elevated load (drag), not physical lockup"
         )
 
     if path_clear:
@@ -182,14 +213,22 @@ def classify(
             f"Ultrasonic distance ({dist_val:.1f} cm) indicates obstacle contact or invalid range"
         )
 
-    if c_match and rpm_match and path_clear:
+    # Jam requires BOTH overcurrent AND physical wheel stall.
+    # A wheel still spinning, even at low RPM, is drag — not jam.
+    if c_match and rpm_physically_stalled and path_clear:
         jam_score = 0.95
-        if window and float(window.get("rpm_mean", 100.0)) < 10.0:
+        if window and float(window.get("rpm_mean", 100.0)) < stall_rpm_threshold * 0.5:
             jam_score = 0.98
-    elif c_match and rpm_match:
-        jam_score = 0.70  # stall current + zero rpm, but distance ambiguous
-    elif c_match or rpm_match:
-        jam_score = 0.20
+    elif c_match and rpm_physically_stalled:
+        jam_score = 0.70  # stall current + physical zero rpm, but distance ambiguous
+    elif c_match and not rpm_physically_stalled:
+        # Current is high but wheel is turning — this is drag, not jam
+        jam_score = 0.0
+        jam_contradicting.append(
+            f"High current with spinning wheel ({rpm_val:.1f} RPM) matches drag profile, not jam"
+        )
+    elif rpm_physically_stalled:
+        jam_score = 0.15  # physical stall without corresponding overcurrent
     else:
         jam_score = 0.0
 
