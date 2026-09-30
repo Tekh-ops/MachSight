@@ -1,8 +1,10 @@
-"""Local LLM Reasoning Engine for IndustrialDoctor RC Car Diagnosis.
+"""Local LLM Reasoning Engine for IndustrialDoctor / MachSight.
 
-Integrates with a local Ollama instance (qwen2.5:7b-instruct by default) using httpx,
-enforcing structured JSON outputs, deterministic fallback on network or model failures,
-and multi-hop reasoning with history summarization.
+Integrates with a local Ollama instance (default: qwen2.5:3b-instruct) via httpx.
+Enforces structured JSON outputs, deterministic fallback on network or model failures,
+and multi-hop reasoning with history summarisation.
+
+Model is configurable via env var MACHSIGHT_LLM_MODEL (see backend/config.py).
 """
 
 import json
@@ -15,8 +17,9 @@ from .classify import FAULT_SIGNATURES
 
 logger = logging.getLogger(__name__)
 
-# Configuration with environment variable overrides
-MACHSIGHT_LLM_MODEL = os.environ.get("MACHSIGHT_LLM_MODEL", "qwen2.5:7b-instruct")
+# Configuration — defaults centralised here; override with env vars.
+# IMPORTANT: The canonical default model for this project is qwen2.5:3b-instruct.
+MACHSIGHT_LLM_MODEL = os.environ.get("MACHSIGHT_LLM_MODEL", "qwen2.5:3b-instruct")
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434").rstrip("/")
 MACHSIGHT_LLM_TIMEOUT = float(os.environ.get("MACHSIGHT_LLM_TIMEOUT", "45"))
 
@@ -265,6 +268,7 @@ def _normalize_output(
             "suggested_charts": list(ui_hints.get("suggested_charts", [])),
         },
         "stage": stage,
+        "suspected_component": evidence.get("suspected_component"),
     }
 
 
@@ -375,6 +379,7 @@ def reason_fallback(
             "suggested_charts": charts,
         },
         "stage": stage,
+        "suspected_component": evidence.get("suspected_component"),
     }
 
 
@@ -385,16 +390,16 @@ def reason(
     ollama_url: Optional[str] = None,
     timeout: Optional[float] = None
 ) -> Dict[str, Any]:
-    """Autonomous reasoning agent for RC car anomaly diagnosis.
+    """Autonomous reasoning agent for machine anomaly diagnosis.
 
     Evaluates telemetry evidence and multi-hop investigation history using local LLM
-    (Ollama qwen2.5:3b-instruct / qwen2.5:7b-instruct), with structured outputs,
+    (Ollama qwen2.5:3b-instruct by default), with structured outputs,
     prompt-level retry, and instantaneous deterministic fallback if the LLM is unavailable or times out.
 
     Args:
         evidence: Evidence dictionary containing telemetry, features, and top matches.
         history: List of previous reasoning result dictionaries from earlier loop iterations.
-        model: Optional model override (defaults to MACHSIGHT_LLM_MODEL env or qwen2.5:7b-instruct).
+        model: Optional model override (defaults to MACHSIGHT_LLM_MODEL env or qwen2.5:3b-instruct).
         ollama_url: Optional Ollama URL override (defaults to OLLAMA_URL env or http://localhost:11434).
         timeout: Optional timeout in seconds (defaults to MACHSIGHT_LLM_TIMEOUT or 45).
 

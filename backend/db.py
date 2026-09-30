@@ -1,23 +1,53 @@
+"""SQLite persistence layer for IndustrialDoctor / MachSight.
+
+Schema evolution is ALWAYS backward-compatible:
+  - New columns are added via ALTER TABLE … ADD COLUMN (only if absent).
+  - No existing tables or columns are dropped.
+  - DB_PATH is configurable via MACHSIGHT_DB_PATH env var (see config.py).
+"""
+
+import os
 import sqlite3
 from pathlib import Path
 
-DB_PATH = Path(__file__).resolve().parent / "telemetry.db"
+# DB path: prefer config if importable, fall back to env/sibling default
+try:
+    from config import DB_PATH as _CONFIG_DB_PATH
+    DB_PATH = Path(_CONFIG_DB_PATH)
+except Exception:
+    _env_path = os.environ.get("MACHSIGHT_DB_PATH", "")
+    DB_PATH = Path(_env_path) if _env_path else Path(__file__).resolve().parent / "telemetry.db"
 
 # SQLite connection configured for async/multi-thread access from FastAPI
-conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
 conn.row_factory = sqlite3.Row
 
 
 def init_db() -> None:
-    """Creates the database schema if tables do not already exist."""
+    """Creates the database schema if tables do not already exist.
+
+    Uses CREATE TABLE IF NOT EXISTS so re-runs are idempotent.
+    Column additions for existing tables use ALTER TABLE … ADD COLUMN
+    with an existence check to remain safe across upgrades.
+    """
     cursor = conn.cursor()
     cursor.executescript(
         """
         CREATE TABLE IF NOT EXISTS raw_telemetry (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            timestamp REAL, car_id TEXT,
+            timestamp REAL,
+            -- Legacy RC-car identity (kept for backward compat)
+            car_id TEXT,
+            -- Generalised machine identity (Phase 1 addition)
+            machine_id TEXT,
+            asset_type TEXT DEFAULT 'rc_vehicle',
+            schema_version INTEGER DEFAULT 1,
+            -- RC-car / drive signals
             distance_cm REAL, current_a REAL, rpm REAL,
-            pwm_command INTEGER, mode TEXT
+            pwm_command INTEGER, mode TEXT,
+            -- Optional industrial signals (NULL when not present)
+            voltage_v REAL, temperature_c REAL,
+            vibration_rms REAL, pressure_bar REAL
         );
 
         CREATE TABLE IF NOT EXISTS processed_telemetry (
@@ -31,6 +61,8 @@ def init_db() -> None:
         CREATE TABLE IF NOT EXISTS investigations (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             trace_id TEXT, timestamp REAL,
+            -- machine_id added in Phase 1 for multi-machine support
+            machine_id TEXT,
             step_type TEXT,
             payload TEXT
         );
@@ -38,18 +70,40 @@ def init_db() -> None:
     )
     conn.commit()
 
-    # Backward-compatible column migrations for processed_telemetry
-    cursor.execute("PRAGMA table_info(processed_telemetry)")
-    existing_cols = {row[1] for row in cursor.fetchall()}
+    # -----------------------------------------------------------------------
+    # Backward-compatible column migrations
+    # -----------------------------------------------------------------------
+    def _ensure_column(table: str, col_name: str, col_type: str) -> None:
+        cursor.execute(f"PRAGMA table_info({table})")
+        existing = {row[1] for row in cursor.fetchall()}
+        if col_name not in existing:
+            cursor.execute(
+                f"ALTER TABLE {table} ADD COLUMN {col_name} {col_type}"
+            )
+            conn.commit()
+
+    # processed_telemetry: legacy optional columns
     for col_name, col_type in [
         ("distance_plausible", "INTEGER DEFAULT 1"),
         ("bucket_used", "TEXT DEFAULT ''"),
         ("is_anomaly", "INTEGER DEFAULT 0"),
     ]:
-        if col_name not in existing_cols:
-            cursor.execute(f"ALTER TABLE processed_telemetry ADD COLUMN {col_name} {col_type}")
-    conn.commit()
+        _ensure_column("processed_telemetry", col_name, col_type)
 
+    # raw_telemetry: Phase 1 additions
+    for col_name, col_type in [
+        ("machine_id", "TEXT"),
+        ("asset_type", "TEXT DEFAULT 'rc_vehicle'"),
+        ("schema_version", "INTEGER DEFAULT 1"),
+        ("voltage_v", "REAL"),
+        ("temperature_c", "REAL"),
+        ("vibration_rms", "REAL"),
+        ("pressure_bar", "REAL"),
+    ]:
+        _ensure_column("raw_telemetry", col_name, col_type)
+
+    # investigations: Phase 1 machine_id scoping
+    _ensure_column("investigations", "machine_id", "TEXT")
 
 
 def get_db_connection() -> sqlite3.Connection:

@@ -30,6 +30,12 @@ import db
 @pytest.fixture(autouse=True)
 def reset_backend_state():
     """Resets backend investigation counters, locks, and cooldown before each test."""
+    # Reset the default machine slot (car-01) that the backward-compat proxy delegates to
+    from machine_state import machine_registry, MachineState
+    machine_registry._states.clear()
+    # Pre-create the default slot so attribute access in the test doesn't auto-create lazily
+    machine_registry._states["car-01"] = MachineState(machine_id="car-01")
+    # Also reset via the backward-compat proxy attributes so any main.X = Y paths work
     main.is_investigating = False
     main.last_investigation_end_time = 0.0
     main.consecutive_anomalies = 0
@@ -48,7 +54,7 @@ def test_anomaly_triggers_exactly_one_investigation(client):
     """Verifies that an anomaly requires N consecutive readings to trigger, runs single-flight, and obeys cooldown."""
     investigation_calls = []
 
-    async def mock_investigation(reading, processed, result):
+    async def mock_investigation(machine, reading, processed, result):
         investigation_calls.append(reading)
         await asyncio.sleep(0.05)
 
@@ -129,11 +135,14 @@ def test_request_more_data_collects_new_window_and_diagnoses():
     # Populate rolling buffer with simulated incoming readings during wait
     async def simulate_incoming_telemetry():
         await asyncio.sleep(0.05)
+        from machine_state import machine_registry
+        machine = machine_registry.get("car-01")
         for i in range(5):
-            main._reading_seq += 1
-            main.rolling_buffer.append({
-                "_seq": main._reading_seq,
+            machine.reading_seq += 1
+            machine.rolling_buffer.append({
+                "_seq": machine.reading_seq,
                 "car_id": "car-01",
+                "machine_id": "car-01",
                 "current_a": 6.1,
                 "rpm": 18.0,
                 "distance_cm": 84.0,
@@ -148,9 +157,11 @@ def test_request_more_data_collects_new_window_and_diagnoses():
         broadcasted_events.append((event_type, data))
 
     async def run_test():
+        from machine_state import machine_registry, MachineState
+        machine = machine_registry.get("car-01")
         asyncio.create_task(simulate_incoming_telemetry())
         with patch("ml.reasoner.reason", mock_reason), patch.object(main, "broadcast", side_effect=mock_broadcast):
-            await main.trigger_investigation(reading, processed, result)
+            await main.trigger_investigation(machine, reading, processed, result)
 
     asyncio.run(run_test())
 
@@ -223,8 +234,10 @@ def test_inconclusive_event_has_payload():
         broadcasted_events.append((event_type, data))
 
     async def run_test():
+        from machine_state import machine_registry, MachineState
+        machine = machine_registry.get("car-01")
         with patch("ml.reasoner.reason", mock_reason), patch.object(main, "broadcast", side_effect=mock_broadcast):
-            await main.trigger_investigation(reading, processed, result)
+            await main.trigger_investigation(machine, reading, processed, result)
 
     asyncio.run(run_test())
 
