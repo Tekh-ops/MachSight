@@ -49,7 +49,11 @@ def reset_state():
     main.consecutive_anomalies = 0
     main.rolling_buffer.clear()
     main._reading_seq = 0
+    if hasattr(main, "machine_registry"):
+        main.machine_registry._states.clear()
     yield
+    if hasattr(main, "machine_registry"):
+        main.machine_registry._states.clear()
 
 
 # ---------------------------------------------------------------------------

@@ -4,7 +4,7 @@ export type DiagnosticSeverity = 'HIGH' | 'MEDIUM' | 'LOW';
 export type DiagnosticStatus = 'PENDING_ACK' | 'TRIAGED' | 'DISPATCHED' | 'RESOLVED';
 export type LogSeverity = 'DEBUG' | 'INFO' | 'WARN' | 'CRIT';
 export type SubsystemType = 'DRIVETRAIN' | 'MOTOR_ASSEMBLY' | 'ULTRASONIC_ARRAY' | 'POWER_TRAIN' | 'THERMAL_LOOP' | 'VISION_INSPECT';
-export type DashboardTab = 'LANDING' | 'OVERVIEW' | 'DIAGNOSTICS' | 'LOGS';
+export type DashboardTab = 'LANDING' | 'OVERVIEW' | 'DIAGNOSTICS' | 'LOGS' | 'SIMULATOR';
 export type LogFilterSeverity = 'ALL' | 'CRIT' | 'WARN';
 export interface TelemetryPoint {
     readonly time: string;
@@ -28,6 +28,12 @@ export interface WebSocketProcessedEvent {
         readonly bucket_used: string;
         readonly is_anomaly: number;
         readonly id: number;
+        readonly machine_id?: string;
+        readonly distance_cm?: number | null;
+        readonly current_a?: number | null;
+        readonly rpm?: number | null;
+        readonly mode?: string;
+        readonly pwm_command?: number;
     };
 }
 export interface WebSocketInvestigationStepEvent {

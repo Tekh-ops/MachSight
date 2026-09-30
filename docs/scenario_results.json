@@ -1,0 +1,75 @@
+{
+  "scenarios": {
+    "healthy_cruise": {
+      "packets_received": 134,
+      "anomalies_detected": 46,
+      "diagnoses_triggered": 4,
+      "avg_rpm": 225.0,
+      "avg_current_a": 1.33,
+      "passed": false
+    },
+    "motor_drag": {
+      "fault_injected": "motor_drag",
+      "diagnosis_triggered": true,
+      "diagnostic_latency_ms": 1528.0,
+      "diagnosis_text": "Mechanical drag / drivetrain friction resistance",
+      "confidence": 0.98,
+      "suspected_component": {
+        "component_id": "wheel_bearing_axle",
+        "display_name": "Wheel bearing / axle",
+        "system": "drive_train"
+      },
+      "passed": true
+    },
+    "drivetrain_jam": {
+      "fault_injected": "drivetrain_jam",
+      "diagnosis_triggered": true,
+      "diagnostic_latency_ms": 1622.6,
+      "diagnosis_text": "Mechanical drag / drivetrain friction resistance",
+      "confidence": 0.98,
+      "suspected_component": {
+        "component_id": "wheel_bearing_axle",
+        "display_name": "Wheel bearing / axle",
+        "system": "drive_train"
+      },
+      "passed": true
+    },
+    "sensor_fault": {
+      "fault_injected": "ultrasonic_stuck",
+      "diagnosis_triggered": true,
+      "diagnostic_latency_ms": 2016.3,
+      "diagnosis_text": "Ultrasonic distance sensor failure / invalid reading",
+      "confidence": 0.96,
+      "suspected_component": {
+        "component_id": "ultrasonic_sensor",
+        "display_name": "Ultrasonic distance sensor (HC-SR04)",
+        "system": "sensor_array"
+      },
+      "passed": true
+    },
+    "recovery": {
+      "packets_received": 210,
+      "anomalies_detected": 59,
+      "recovered_rpm": 224.12,
+      "recovered_current_a": 1.306,
+      "recovered_distance_cm": 399.25,
+      "passed": false
+    }
+  },
+  "latencies": {
+    "telemetry_latency_ms": {
+      "count": 1183,
+      "min": 1.72,
+      "median_p50": 3.11,
+      "p95": 16.83,
+      "max": 169.38
+    }
+  },
+  "pipeline_checks": {
+    "simulator_to_machsight": true,
+    "machsight_to_ml": true,
+    "ml_to_diagnostic": true,
+    "diagnostic_to_frontend": true,
+    "full_e2e": false
+  }
+}

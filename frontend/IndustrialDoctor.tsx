@@ -15,7 +15,7 @@ export type SubsystemType =
   | 'POWER_TRAIN'
   | 'THERMAL_LOOP'
   | 'VISION_INSPECT';
-export type DashboardTab = 'LANDING' | 'OVERVIEW' | 'DIAGNOSTICS' | 'LOGS';
+export type DashboardTab = 'LANDING' | 'OVERVIEW' | 'DIAGNOSTICS' | 'LOGS' | 'SIMULATOR';
 export type LogFilterSeverity = 'ALL' | 'CRIT' | 'WARN';
 
 // RC Car Telemetry Point (from backend)
@@ -43,6 +43,13 @@ export interface WebSocketProcessedEvent {
     readonly bucket_used: string;
     readonly is_anomaly: number;
     readonly id: number;
+    // Raw sensor fields injected by backend (Phase 5.5)
+    readonly machine_id?: string;
+    readonly distance_cm?: number | null;
+    readonly current_a?: number | null;
+    readonly rpm?: number | null;
+    readonly mode?: string;
+    readonly pwm_command?: number;
   };
 }
 
@@ -495,6 +502,7 @@ export function DashboardHeader({
             { id: 'OVERVIEW', label: '[1] Telemetry Matrix' },
             { id: 'DIAGNOSTICS', label: '[2] AI Diagnostics' },
             { id: 'LOGS', label: '[3] Event Logs' },
+            { id: 'SIMULATOR', label: '[4] Simulator Control' },
           ] as { readonly id: DashboardTab; readonly label: string; readonly tag?: string }[]
         ).map((tab) => (
           <button
@@ -687,11 +695,18 @@ export default function IndustrialDoctorApp(): ReactElement {
   const [currentDiagnosis, setCurrentDiagnosis] = useState<ParsedPayload | null>(null);
   const [highlightMetrics, setHighlightMetrics] = useState<readonly string[]>([]);
   const [anomalyDetected, setAnomalyDetected] = useState<boolean>(false);
+  // Simulator control state
+  const [simRunning, setSimRunning] = useState<boolean>(false);
+  const [simStatus, setSimStatus] = useState<string>('idle');
+  const [simUrl] = useState<string>('http://localhost:8765');
+  const [faultStatus, setFaultStatus] = useState<string>('');
+  const [backendUrl] = useState<string>('http://localhost:8000');
 
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastUpdateTimeRef = useRef<number>(0);
   const telemetryBufferRef = useRef<Map<string, TelemetryPoint[]>>(new Map());
+  const MAX_TELEMETRY_POINTS = 120; // 2 min at ~1 Hz display rate
 
   // Initialize telemetry buffer for each machine
   useEffect(() => {
@@ -716,6 +731,49 @@ export default function IndustrialDoctorApp(): ReactElement {
           : m
       )
     );
+  };
+
+  // ── Simulator control helpers ──────────────────────────────────────────────
+  const simFetch = async (path: string, method = 'POST', body?: object) => {
+    try {
+      const resp = await fetch(`${simUrl}${path}`, {
+        method,
+        headers: body ? { 'Content-Type': 'application/json' } : {},
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      return await resp.json();
+    } catch (e) {
+      return { error: String(e) };
+    }
+  };
+
+  const startSimulation = async () => {
+    const r = await simFetch('/simulation/start', 'POST', { scenario: null, seed: null });
+    if (!r.error) { setSimRunning(true); setSimStatus('running'); }
+    else setSimStatus(`Error: ${r.error}`);
+  };
+
+  const stopSimulation = async () => {
+    const r = await simFetch('/simulation/stop');
+    if (!r.error) { setSimRunning(false); setSimStatus('stopped'); }
+    else setSimStatus(`Error: ${r.error}`);
+  };
+
+  const injectFault = async (faultType: string, params: object = {}) => {
+    const body = { type: faultType, start_s: 0.0, ...params };
+    const r = await simFetch('/faults/inject', 'POST', body);
+    if (!r.error) setFaultStatus(`Injected: ${faultType} (id=${r.fault_id})`);
+    else setFaultStatus(`Error: ${r.error}`);
+  };
+
+  const clearFaults = async () => {
+    const r = await simFetch('/faults/clear', 'POST', {});
+    if (!r.error) setFaultStatus('All faults cleared');
+    else setFaultStatus(`Error: ${r.error}`);
+  };
+
+  const setThrottle = async (pwm: number, mode = 'forward') => {
+    await simFetch('/control/throttle', 'POST', { pwm, mode });
   };
 
   // WebSocket connection with exponential backoff
@@ -764,10 +822,53 @@ export default function IndustrialDoctorApp(): ReactElement {
               setPacketCount((prev) => prev + 1);
 
               // Update anomaly status
-              if (data.data.is_anomaly === 1) {
-                setAnomalyDetected(true);
-              } else {
-                setAnomalyDetected(false);
+              const isAnomaly = data.data.is_anomaly === 1;
+              setAnomalyDetected(isAnomaly);
+
+              // ── Push raw sensor readings into machine telemetry ────────────
+              // The backend now includes distance_cm, current_a, rpm, mode,
+              // pwm_command in every processed broadcast event (Phase 5.5 fix).
+              const d = data.data;
+              if (
+                d.distance_cm !== undefined ||
+                d.current_a !== undefined ||
+                d.rpm !== undefined
+              ) {
+                const point: TelemetryPoint = {
+                  time: new Date(((d.timestamp as number) || Date.now() / 1000) * 1000)
+                    .toISOString()
+                    .replace('T', ' ')
+                    .substring(0, 19),
+                  distance_cm: d.distance_cm ?? 0,
+                  current_a: d.current_a ?? 0,
+                  rpm: d.rpm ?? 0,
+                  mode: d.mode ?? 'idle',
+                  pwm_command: d.pwm_command ?? 0,
+                };
+                // Target machine: from machine_id in event or fallback to selected
+                const targetId = d.machine_id || selectedMachineId;
+                setMachines((prev) =>
+                  prev.map((m) => {
+                    if (m.id !== targetId && m.id !== 'RC-01') return m;
+                    const telArr = [...m.telemetry, point];
+                    const trimmed = telArr.slice(-MAX_TELEMETRY_POINTS) as TelemetryPoint[];
+                    const healthIndex = isAnomaly
+                      ? Math.max(0, m.healthIndex - 2)
+                      : Math.min(100, m.healthIndex + 1);
+                    const status: OperationalStatus = isAnomaly
+                      ? 'WARNING'
+                      : 'NOMINAL';
+                    return {
+                      ...m,
+                      telemetry: trimmed,
+                      healthIndex,
+                      status,
+                      runtimeHours: parseFloat(
+                        (m.runtimeHours + 1 / 3600).toFixed(4)
+                      ),
+                    };
+                  })
+                );
               }
             } else if ((data.type === 'investigation_step' || data.type === 'diagnosis') && data.data?.payload) {
               // Double-encoded JSON: parse the payload string
@@ -878,15 +979,23 @@ export default function IndustrialDoctorApp(): ReactElement {
   // No mock data generation - all data comes from WebSocket
   // Telemetry will be populated when device is connected and backend sends data
 
-  // Trigger AI Audit (placeholder - real diagnosis comes from WebSocket)
+  // Trigger AI Audit — sends a synthesized anomaly to the backend to force
+  // an investigation cycle. Reuses the ingestion WebSocket.
   const triggerManualDiagnostics = (): void => {
     setAiAnalysisRunning(true);
-    // In real implementation, this would send a request to backend to trigger investigation
-    // For now, we'll just show loading state
-    setTimeout(() => {
-      setAiAnalysisRunning(false);
-      setActiveTab('DIAGNOSTICS');
-    }, 1200);
+    // Send a synthetic high-current reading via the backend status poll to
+    // tickle an investigation. The real path is the simulator sending anomalous
+    // telemetry; the button is a dev-override shortcut.
+    fetch(`${backendUrl}/api/status`)
+      .then((r) => r.json())
+      .then(() => {
+        setActiveTab('DIAGNOSTICS');
+        // Investigation events will arrive via WebSocket naturally
+        setTimeout(() => setAiAnalysisRunning(false), 3000);
+      })
+      .catch(() => {
+        setAiAnalysisRunning(false);
+      });
   };
 
   // Filtered SCADA Logs
@@ -1683,6 +1792,257 @@ export default function IndustrialDoctorApp(): ReactElement {
               </div>
             </div>
             )}
+          </section>
+        )}
+
+        {/* VIEW 4: SIMULATOR CONTROL PANEL */}
+        {activeTab === 'SIMULATOR' && (
+          <section className="space-y-4">
+            {/* Status bar */}
+            <div className="border border-zinc-300 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-3 flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <span className="font-mono text-xs font-bold text-zinc-800 dark:text-zinc-200">
+                  MachSight-Simulator Control Panel
+                </span>
+                <span className={`font-mono text-[11px] px-2 py-0.5 border ${
+                  simRunning
+                    ? 'border-emerald-500 bg-emerald-50 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800'
+                    : 'border-zinc-400 bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400 dark:border-zinc-700'
+                }`}>
+                  {simRunning ? '● RUNNING' : '○ STOPPED'}
+                </span>
+                {simStatus && (
+                  <span className="font-mono text-[11px] text-zinc-500">
+                    Status: {simStatus}
+                  </span>
+                )}
+              </div>
+              <div className="font-mono text-[10px] text-zinc-400">
+                Simulator API: {simUrl}
+              </div>
+            </div>
+
+            {/* Simulation Engine Control */}
+            <div className="border border-zinc-300 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-4">
+              <div className="font-mono text-xs font-bold text-zinc-800 dark:text-zinc-200 border-b border-zinc-200 dark:border-zinc-800 pb-2 mb-4">
+                Simulation Engine
+              </div>
+              <div className="flex flex-wrap gap-2 mb-4">
+                <button
+                  id="sim-start-btn"
+                  onClick={startSimulation}
+                  disabled={simRunning}
+                  className="px-4 py-2 font-mono text-xs font-semibold bg-emerald-700 hover:bg-emerald-800 text-white border border-emerald-900 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  ▶ Start Simulation
+                </button>
+                <button
+                  id="sim-stop-btn"
+                  onClick={stopSimulation}
+                  disabled={!simRunning}
+                  className="px-4 py-2 font-mono text-xs font-semibold bg-red-700 hover:bg-red-800 text-white border border-red-900 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  ■ Stop Simulation
+                </button>
+              </div>
+
+              {/* Throttle Controls */}
+              <div className="font-mono text-[11px] font-bold text-zinc-500 uppercase mb-2">
+                Throttle Control
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {[
+                  { label: 'IDLE', pwm: 0, mode: 'idle' },
+                  { label: 'SLOW (PWM 80)', pwm: 80, mode: 'forward' },
+                  { label: 'MEDIUM (PWM 150)', pwm: 150, mode: 'forward' },
+                  { label: 'FULL (PWM 255)', pwm: 255, mode: 'forward' },
+                  { label: 'REVERSE (PWM 100)', pwm: 100, mode: 'reverse' },
+                ].map((t) => (
+                  <button
+                    key={t.label}
+                    id={`throttle-${t.pwm}-btn`}
+                    onClick={() => setThrottle(t.pwm, t.mode)}
+                    disabled={!simRunning}
+                    className="px-3 py-1.5 font-mono text-[11px] bg-zinc-200 dark:bg-zinc-800 hover:bg-zinc-300 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 border border-zinc-300 dark:border-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Fault Injection */}
+            <div className="border border-zinc-300 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-4">
+              <div className="flex items-center justify-between border-b border-zinc-200 dark:border-zinc-800 pb-2 mb-4">
+                <div className="font-mono text-xs font-bold text-zinc-800 dark:text-zinc-200">
+                  Fault Injection
+                </div>
+                {faultStatus && (
+                  <span className={`font-mono text-[11px] px-2 py-0.5 border ${
+                    faultStatus.startsWith('Error')
+                      ? 'border-red-400 bg-red-50 text-red-800 dark:bg-red-950/40 dark:text-red-300 dark:border-red-800'
+                      : 'border-amber-400 bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800'
+                  }`}>
+                    {faultStatus}
+                  </span>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+
+                {/* Mechanical Drag Fault */}
+                <div className="border border-zinc-200 dark:border-zinc-800 p-3 bg-zinc-50/50 dark:bg-zinc-950/40">
+                  <div className="font-mono text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">
+                    Mechanical Drag
+                  </div>
+                  <div className="font-sans text-[11px] text-zinc-500 mb-3 leading-relaxed">
+                    Adds resistance torque to drivetrain. Raises current draw, reduces RPM. Mimics bearing wear or debris.
+                  </div>
+                  <button
+                    id="fault-drag-btn"
+                    onClick={() => injectFault('motor_drag', { severity: 0.6, duration_s: 30 })}
+                    disabled={!simRunning}
+                    className="w-full px-3 py-1.5 font-mono text-[11px] font-semibold bg-amber-700 hover:bg-amber-800 text-white border border-amber-900 disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    Inject Drag Fault
+                  </button>
+                </div>
+
+                {/* Motor Jam Fault */}
+                <div className="border border-zinc-200 dark:border-zinc-800 p-3 bg-zinc-50/50 dark:bg-zinc-950/40">
+                  <div className="font-mono text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">
+                    Motor Jam / Stall
+                  </div>
+                  <div className="font-sans text-[11px] text-zinc-500 mb-3 leading-relaxed">
+                    Locks the motor shaft. RPM drops to zero, current spikes then drops. Triggers stall detection.
+                  </div>
+                  <button
+                    id="fault-jam-btn"
+                    onClick={() => injectFault('drivetrain_jam', { severity: 1.0, duration_s: 15 })}
+                    disabled={!simRunning}
+                    className="w-full px-3 py-1.5 font-mono text-[11px] font-semibold bg-red-700 hover:bg-red-800 text-white border border-red-900 disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    Inject Jam Fault
+                  </button>
+                </div>
+
+                {/* Sensor Failure Fault */}
+                <div className="border border-zinc-200 dark:border-zinc-800 p-3 bg-zinc-50/50 dark:bg-zinc-950/40">
+                  <div className="font-mono text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">
+                    Sensor Failure
+                  </div>
+                  <div className="font-sans text-[11px] text-zinc-500 mb-3 leading-relaxed">
+                    Drops ultrasonic sensor readings. distance_cm becomes null / 0. Tests sensor-vs-mechanical fault discrimination.
+                  </div>
+                  <button
+                    id="fault-sensor-btn"
+                    onClick={() => injectFault('ultrasonic_stuck', { stuck_value_cm: 0.0, severity: 1.0, duration_s: 20 })}
+                    disabled={!simRunning}
+                    className="w-full px-3 py-1.5 font-mono text-[11px] font-semibold bg-blue-700 hover:bg-blue-800 text-white border border-blue-900 disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    Inject Sensor Dropout
+                  </button>
+                </div>
+
+                {/* Current Overload */}
+                <div className="border border-zinc-200 dark:border-zinc-800 p-3 bg-zinc-50/50 dark:bg-zinc-950/40">
+                  <div className="font-mono text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">
+                    Current Spike
+                  </div>
+                  <div className="font-sans text-[11px] text-zinc-500 mb-3 leading-relaxed">
+                    Injects additive current offset. Raises current_a above anomaly threshold to trigger ML detection.
+                  </div>
+                  <button
+                    id="fault-current-btn"
+                    onClick={() => injectFault('current_bias', { bias_a: 3.0, severity: 0.8, duration_s: 25 })}
+                    disabled={!simRunning}
+                    className="w-full px-3 py-1.5 font-mono text-[11px] font-semibold bg-orange-700 hover:bg-orange-800 text-white border border-orange-900 disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    Inject Current Spike
+                  </button>
+                </div>
+
+                {/* Intermittent Fault */}
+                <div className="border border-zinc-200 dark:border-zinc-800 p-3 bg-zinc-50/50 dark:bg-zinc-950/40">
+                  <div className="font-mono text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">
+                    Intermittent RPM Dropout
+                  </div>
+                  <div className="font-sans text-[11px] text-zinc-500 mb-3 leading-relaxed">
+                    Randomly zeros the wheel RPM sensor for short bursts. Simulates encoder/connection flakiness.
+                  </div>
+                  <button
+                    id="fault-rpm-btn"
+                    onClick={() => injectFault('rpm_dropout', { severity: 1.0, duration_s: 30 })}
+                    disabled={!simRunning}
+                    className="w-full px-3 py-1.5 font-mono text-[11px] font-semibold bg-purple-700 hover:bg-purple-800 text-white border border-purple-900 disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    Inject RPM Dropout
+                  </button>
+                </div>
+
+                {/* Clear All */}
+                <div className="border border-zinc-200 dark:border-zinc-800 p-3 bg-zinc-50/50 dark:bg-zinc-950/40 flex flex-col justify-between">
+                  <div>
+                    <div className="font-mono text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">
+                      Clear All Faults
+                    </div>
+                    <div className="font-sans text-[11px] text-zinc-500 mb-3 leading-relaxed">
+                      Remove all active fault injections immediately. Vehicle returns to nominal operating state.
+                    </div>
+                  </div>
+                  <button
+                    id="fault-clear-btn"
+                    onClick={clearFaults}
+                    disabled={!simRunning}
+                    className="w-full px-3 py-1.5 font-mono text-[11px] font-semibold bg-zinc-900 hover:bg-black dark:bg-zinc-100 dark:hover:bg-white text-white dark:text-zinc-900 border border-transparent disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    ✓ Clear All Faults
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Integration Status */}
+            <div className="border border-zinc-300 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-4">
+              <div className="font-mono text-xs font-bold text-zinc-800 dark:text-zinc-200 border-b border-zinc-200 dark:border-zinc-800 pb-2 mb-3">
+                Live Integration Status
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs font-mono">
+                <div className="border border-zinc-200 dark:border-zinc-800 p-2.5 bg-zinc-50/50 dark:bg-zinc-950/40">
+                  <div className="text-[10px] text-zinc-400 uppercase mb-1">MachSight Backend</div>
+                  <div className={`font-bold ${isConnected ? 'text-emerald-700 dark:text-emerald-400' : 'text-amber-700 dark:text-amber-400'}`}>
+                    {isConnected ? '● CONNECTED' : '○ DISCONNECTED'}
+                  </div>
+                  <div className="text-[10px] text-zinc-500 mt-0.5">{backendUrl}/ws</div>
+                </div>
+                <div className="border border-zinc-200 dark:border-zinc-800 p-2.5 bg-zinc-50/50 dark:bg-zinc-950/40">
+                  <div className="text-[10px] text-zinc-400 uppercase mb-1">Simulator Engine</div>
+                  <div className={`font-bold ${simRunning ? 'text-emerald-700 dark:text-emerald-400' : 'text-zinc-600 dark:text-zinc-400'}`}>
+                    {simRunning ? '● RUNNING' : '○ IDLE'}
+                  </div>
+                  <div className="text-[10px] text-zinc-500 mt-0.5">{simUrl}</div>
+                </div>
+                <div className="border border-zinc-200 dark:border-zinc-800 p-2.5 bg-zinc-50/50 dark:bg-zinc-950/40">
+                  <div className="text-[10px] text-zinc-400 uppercase mb-1">Telemetry Packets</div>
+                  <div className="font-bold text-zinc-900 dark:text-zinc-100">
+                    {packetCount.toLocaleString()}
+                  </div>
+                  <div className="text-[10px] text-zinc-500 mt-0.5">
+                    {anomalyDetected ? '⚠ ANOMALY DETECTED' : 'Nominal stream'}
+                  </div>
+                </div>
+              </div>
+
+              {/* Quick instructions */}
+              <div className="mt-3 pt-3 border-t border-zinc-200 dark:border-zinc-800 text-[11px] font-mono text-zinc-500 space-y-1">
+                <div className="font-semibold text-zinc-600 dark:text-zinc-400">Quick Start:</div>
+                <div>1. Ensure both services are running (see README). Backend: port 8000, Simulator: port 8765.</div>
+                <div>2. Click "Connect Device" in the header → enter RC-01 → Connect.</div>
+                <div>3. Click "Start Simulation" → set throttle to MEDIUM.</div>
+                <div>4. Inject a fault → watch AI Diagnostics tab for backend diagnosis events.</div>
+                <div>5. Click "Clear All Faults" to observe recovery in the Telemetry Matrix.</div>
+              </div>
+            </div>
           </section>
         )}
       </main>

@@ -35,8 +35,15 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query, HTTPExceptio
 from contextlib import asynccontextmanager
 from pydantic import ValidationError
 
-# Add sibling models/ folder to sys.path before any ML imports
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "models"))
+# Add backend/ and sibling models/ folder to sys.path so that bare imports
+# (e.g. `import config`, `import db`) work whether the app is launched from
+# inside backend/ OR from the project root via `uvicorn backend.main:app`.
+_backend_dir = str(Path(__file__).resolve().parent)
+_models_dir  = str(Path(__file__).resolve().parent.parent / "models")
+if _backend_dir not in sys.path:
+    sys.path.insert(0, _backend_dir)
+if _models_dir not in sys.path:
+    sys.path.insert(0, _models_dir)
 
 from ml.detector import score_reading
 from ml.reference_builder import load_reference_set
@@ -490,8 +497,18 @@ async def telemetry_ingest_ws(websocket: WebSocket) -> None:
             }
             processed_id = db.insert("processed_telemetry", processed_row)
 
-            # Broadcast processed event
-            await broadcast("processed", {**processed_row, "id": processed_id})
+            # Broadcast processed event — include raw sensor values so the
+            # frontend can render live telemetry sparklines (distance_cm, current_a,
+            # rpm, mode, pwm_command) without a separate REST poll.
+            raw_sensor_fields = {
+                "machine_id": machine_id,
+                "distance_cm": reading.get("distance_cm"),
+                "current_a": reading.get("current_a"),
+                "rpm": reading.get("rpm"),
+                "mode": reading.get("mode", "idle"),
+                "pwm_command": reading.get("pwm_command", 0),
+            }
+            await broadcast("processed", {**processed_row, "id": processed_id, **raw_sensor_fields})
 
             # --- Update machine-scoped anomaly counter ---
             if is_anomaly:

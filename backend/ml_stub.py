@@ -1,9 +1,20 @@
-# STUB — only reason() is fake here. detector.score_reading() is the real thing, already wired into main.py.
+"""ml_stub.py — Contract-complete deterministic fallback reasoner for stub mode."""
+
+import sys
+from pathlib import Path
+
+_models_dir = str(Path(__file__).resolve().parent.parent / "models")
+if _models_dir not in sys.path:
+    sys.path.insert(0, _models_dir)
+
+from ml.reasoner import reason_fallback
 
 
 def reason(evidence: dict, history: list) -> dict:
-    return {
-        "action": "diagnose",
-        "diagnosis": "stub — detector reasons: " + str(evidence.get("reasons", [])),
-        "confidence": 0.5,
-    }
+    """Return a contract-complete diagnosis derived from rule-based classification."""
+    return reason_fallback(
+        evidence=evidence,
+        history=history,
+        error_note="Stub mode (rule-based reasoner)",
+        stage="final",
+    )

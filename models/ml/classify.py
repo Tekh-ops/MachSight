@@ -92,11 +92,11 @@ def classify(
     rpm_val = float(processed.get("rpm", 0.0))
     pwm_val = int(processed.get("pwm_command", 0))
 
-    # Stall RPM threshold: 15% of the bucket RPM baseline (minimum 20 RPM).
-    # Below this the wheel is effectively locked (jam territory).
+    # Stall RPM threshold: 22% of the bucket RPM baseline (minimum 20 RPM).
+    # Below this the wheel is effectively locked or severely stalled (jam territory).
     # Above this the wheel is still meaningfully turning (drag territory).
     baseline_rpm = float(processed.get("baseline_rpm_mean", 0.0))
-    stall_rpm_threshold = max(20.0, baseline_rpm * 0.15)
+    stall_rpm_threshold = max(20.0, baseline_rpm * 0.22)
 
     # -------------------------------------------------------------------------
     # 1. Fault Signature: mechanical_drag
