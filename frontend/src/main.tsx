@@ -1,12 +1,12 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import IndustrialDoctorApp from '../IndustrialDoctor';
+import { App } from './App';
 
 const rootElement = document.getElementById('root');
 if (rootElement) {
   ReactDOM.createRoot(rootElement).render(
     <React.StrictMode>
-      <IndustrialDoctorApp />
+      <App />
     </React.StrictMode>
   );
 }

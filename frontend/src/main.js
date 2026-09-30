@@ -1,9 +1,9 @@
 import { jsx as _jsx } from "react/jsx-runtime";
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import IndustrialDoctorApp from '../IndustrialDoctor';
+import { App } from './App';
 const rootElement = document.getElementById('root');
 if (rootElement) {
-    ReactDOM.createRoot(rootElement).render(_jsx(React.StrictMode, { children: _jsx(IndustrialDoctorApp, {}) }));
+    ReactDOM.createRoot(rootElement).render(_jsx(React.StrictMode, { children: _jsx(App, {}) }));
 }
 //# sourceMappingURL=main.js.map

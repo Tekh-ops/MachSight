@@ -2083,3 +2083,4 @@ export default function IndustrialDoctorApp(): ReactElement {
     </div>
   );
 }
+

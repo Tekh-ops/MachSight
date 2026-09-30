@@ -1,0 +1,58 @@
+
+╔══════════════════════════════════════════════════════╗
+║          MachSight-Simulator  v0.1.0                 ║
+║  Physics-inspired RC-car Digital Twin & Evaluator    ║
+╚══════════════════════════════════════════════════════╝
+  Machine ID  : rc-sim-01
+  Server      : http://127.0.0.1:8765
+  Telemetry WS: ws://127.0.0.1:8765/ws/telemetry
+  MachSight   : ws://localhost:8000/telemetry/ingest
+
+2026-10-01 00:02:18,316 [WARNING] simulator.telemetry.websocket: MachSight dispatch failed (sent 1011 (internal error) keepalive ping timeout; no close frame received) — marking transport reconnecting
+2026-10-01 00:02:28,315 [WARNING] simulator.telemetry.websocket: MachSight transport connection failed (ws://localhost:8000/telemetry/ingest): timed out during opening handshake
+2026-10-01 00:02:38,307 [WARNING] simulator.telemetry.websocket: MachSight transport connection failed (ws://localhost:8000/telemetry/ingest): timed out during opening handshake
+2026-10-01 00:02:48,312 [WARNING] simulator.telemetry.websocket: MachSight transport connection failed (ws://localhost:8000/telemetry/ingest): timed out during opening handshake
+2026-10-01 00:06:00,354 [WARNING] simulator.telemetry.websocket: MachSight dispatch failed (sent 1011 (internal error) keepalive ping timeout; no close frame received) — marking transport reconnecting
+2026-10-01 00:06:10,357 [WARNING] simulator.telemetry.websocket: MachSight transport connection failed (ws://localhost:8000/telemetry/ingest): timed out during opening handshake
+2026-10-01 00:06:20,359 [WARNING] simulator.telemetry.websocket: MachSight transport connection failed (ws://localhost:8000/telemetry/ingest): timed out during opening handshake
+2026-10-01 00:07:11,901 [WARNING] simulator.telemetry.websocket: MachSight dispatch failed (sent 1011 (internal error) keepalive ping timeout; no close frame received) — marking transport reconnecting
+2026-10-01 00:09:03,934 [WARNING] simulator.telemetry.websocket: MachSight dispatch failed (sent 1011 (internal error) keepalive ping timeout; no close frame received) — marking transport reconnecting
+2026-10-01 00:09:13,937 [WARNING] simulator.telemetry.websocket: MachSight transport connection failed (ws://localhost:8000/telemetry/ingest): timed out during opening handshake
+2026-10-01 00:09:23,940 [WARNING] simulator.telemetry.websocket: MachSight transport connection failed (ws://localhost:8000/telemetry/ingest): timed out during opening handshake
+2026-10-01 00:11:36,142 [WARNING] simulator.telemetry.websocket: MachSight dispatch failed (sent 1011 (internal error) keepalive ping timeout; no close frame received) — marking transport reconnecting
+2026-10-01 00:11:46,143 [WARNING] simulator.telemetry.websocket: MachSight transport connection failed (ws://localhost:8000/telemetry/ingest): timed out during opening handshake
+2026-10-01 00:11:56,140 [WARNING] simulator.telemetry.websocket: MachSight transport connection failed (ws://localhost:8000/telemetry/ingest): timed out during opening handshake
+2026-10-01 00:12:06,148 [WARNING] simulator.telemetry.websocket: MachSight transport connection failed (ws://localhost:8000/telemetry/ingest): timed out during opening handshake
+2026-10-01 00:12:16,142 [WARNING] simulator.telemetry.websocket: MachSight transport connection failed (ws://localhost:8000/telemetry/ingest): timed out during opening handshake
+2026-10-01 00:13:31,062 [WARNING] simulator.telemetry.websocket: MachSight dispatch failed (sent 1011 (internal error) keepalive ping timeout; no close frame received) — marking transport reconnecting
+2026-10-01 00:13:41,056 [WARNING] simulator.telemetry.websocket: MachSight transport connection failed (ws://localhost:8000/telemetry/ingest): timed out during opening handshake
+2026-10-01 00:13:51,063 [WARNING] simulator.telemetry.websocket: MachSight transport connection failed (ws://localhost:8000/telemetry/ingest): timed out during opening handshake
+2026-10-01 00:14:01,056 [WARNING] simulator.telemetry.websocket: MachSight transport connection failed (ws://localhost:8000/telemetry/ingest): timed out during opening handshake
+2026-10-01 00:15:39,015 [WARNING] simulator.telemetry.websocket: MachSight dispatch failed (sent 1011 (internal error) keepalive ping timeout; no close frame received) — marking transport reconnecting
+2026-10-01 00:17:17,112 [WARNING] simulator.telemetry.websocket: MachSight dispatch failed (sent 1011 (internal error) keepalive ping timeout; no close frame received) — marking transport reconnecting
+2026-10-01 00:18:35,765 [WARNING] simulator.telemetry.websocket: MachSight dispatch failed (sent 1011 (internal error) keepalive ping timeout; no close frame received) — marking transport reconnecting
+2026-10-01 00:18:45,772 [WARNING] simulator.telemetry.websocket: MachSight transport connection failed (ws://localhost:8000/telemetry/ingest): timed out during opening handshake
+2026-10-01 00:18:55,771 [WARNING] simulator.telemetry.websocket: MachSight transport connection failed (ws://localhost:8000/telemetry/ingest): timed out during opening handshake
+2026-10-01 00:19:05,771 [WARNING] simulator.telemetry.websocket: MachSight transport connection failed (ws://localhost:8000/telemetry/ingest): timed out during opening handshake
+2026-10-01 00:19:15,764 [WARNING] simulator.telemetry.websocket: MachSight transport connection failed (ws://localhost:8000/telemetry/ingest): timed out during opening handshake
+2026-10-01 00:20:50,617 [WARNING] simulator.telemetry.websocket: MachSight dispatch failed (sent 1011 (internal error) keepalive ping timeout; no close frame received) — marking transport reconnecting
+2026-10-01 00:21:00,604 [WARNING] simulator.telemetry.websocket: MachSight transport connection failed (ws://localhost:8000/telemetry/ingest): timed out during opening handshake
+2026-10-01 00:22:32,109 [WARNING] simulator.telemetry.websocket: MachSight dispatch failed (sent 1011 (internal error) keepalive ping timeout; no close frame received) — marking transport reconnecting
+2026-10-01 00:41:08,701 [WARNING] simulator.telemetry.websocket: MachSight dispatch failed (sent 1011 (internal error) keepalive ping timeout; no close frame received) — marking transport reconnecting
+2026-10-01 00:42:25,886 [WARNING] simulator.telemetry.websocket: MachSight dispatch failed (sent 1011 (internal error) keepalive ping timeout; no close frame received) — marking transport reconnecting
+2026-10-01 00:42:35,889 [WARNING] simulator.telemetry.websocket: MachSight transport connection failed (ws://localhost:8000/telemetry/ingest): timed out during opening handshake
+2026-10-01 00:42:45,894 [WARNING] simulator.telemetry.websocket: MachSight transport connection failed (ws://localhost:8000/telemetry/ingest): timed out during opening handshake
+2026-10-01 00:42:55,897 [WARNING] simulator.telemetry.websocket: MachSight transport connection failed (ws://localhost:8000/telemetry/ingest): timed out during opening handshake
+2026-10-01 00:43:05,892 [WARNING] simulator.telemetry.websocket: MachSight transport connection failed (ws://localhost:8000/telemetry/ingest): timed out during opening handshake
+2026-10-01 00:43:15,889 [WARNING] simulator.telemetry.websocket: MachSight transport connection failed (ws://localhost:8000/telemetry/ingest): timed out during opening handshake
+2026-10-01 00:44:34,444 [WARNING] simulator.telemetry.websocket: MachSight dispatch failed (sent 1011 (internal error) keepalive ping timeout; no close frame received) — marking transport reconnecting
+2026-10-01 00:44:44,436 [WARNING] simulator.telemetry.websocket: MachSight transport connection failed (ws://localhost:8000/telemetry/ingest): timed out during opening handshake
+2026-10-01 00:44:54,438 [WARNING] simulator.telemetry.websocket: MachSight transport connection failed (ws://localhost:8000/telemetry/ingest): timed out during opening handshake
+2026-10-01 00:45:04,446 [WARNING] simulator.telemetry.websocket: MachSight transport connection failed (ws://localhost:8000/telemetry/ingest): timed out during opening handshake
+2026-10-01 00:46:20,101 [WARNING] simulator.telemetry.websocket: MachSight dispatch failed (sent 1011 (internal error) keepalive ping timeout; no close frame received) — marking transport reconnecting
+2026-10-01 00:46:30,095 [WARNING] simulator.telemetry.websocket: MachSight transport connection failed (ws://localhost:8000/telemetry/ingest): timed out during opening handshake
+2026-10-01 00:46:40,092 [WARNING] simulator.telemetry.websocket: MachSight transport connection failed (ws://localhost:8000/telemetry/ingest): timed out during opening handshake
+2026-10-01 00:46:50,096 [WARNING] simulator.telemetry.websocket: MachSight transport connection failed (ws://localhost:8000/telemetry/ingest): timed out during opening handshake
+2026-10-01 00:47:00,093 [WARNING] simulator.telemetry.websocket: MachSight transport connection failed (ws://localhost:8000/telemetry/ingest): timed out during opening handshake
+2026-10-01 00:48:12,117 [WARNING] simulator.telemetry.websocket: MachSight dispatch failed (sent 1011 (internal error) keepalive ping timeout; no close frame received) — marking transport reconnecting
+2026-10-01 00:48:22,103 [WARNING] simulator.telemetry.websocket: MachSight transport connection failed (ws://localhost:8000/telemetry/ingest): timed out during opening handshake
