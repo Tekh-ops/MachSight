@@ -207,7 +207,7 @@ def build_evidence(
     anomaly_block: Dict[str, Any] = {
         "is_anomaly": bool(processed.get("is_anomaly", False)),
         "score": round(float(processed.get("mahalanobis_distance", 0.0)), 4),
-        "reasons": processed.get("reasons", [])[:3],
+        "reasons": [r[:25] for r in processed.get("reasons", [])[:1]],
     }
 
     # --- Fault hypotheses ---
@@ -215,10 +215,10 @@ def build_evidence(
         {
             "fault": m["fault"],
             "score": round(float(m["score"]), 4),
-            "matched_conditions": m.get("matched_conditions", [])[:3],
-            "contradicting_conditions": m.get("contradicting", [])[:2],
+            "matched_conditions": [c[:25] for c in m.get("matched_conditions", [])[:1]],
+            "contradicting_conditions": [c[:25] for c in m.get("contradicting", [])[:1]],
         }
-        for m in matches[:3]
+        for m in matches[:2]
     ]
 
     # --- Temporal / window evidence ---
@@ -257,7 +257,7 @@ def build_evidence(
         "baselines": baselines,
         "anomaly": anomaly_block,
         "fault_hypotheses": fault_hypotheses,
-        "temporal_evidence": temporal_evidence,
+        "temporal_evidence": None,
         "suspected_component": suspected_component,
 
         # --- Legacy flat keys (backward compat for existing tests / frontend) ---
@@ -285,8 +285,6 @@ def build_evidence(
             }
             for h in fault_hypotheses[:2]
         ],
-        # Also kept as top-level aliases for reasoner.py / test_backend.py access
-        "top_rule_matches": fault_hypotheses,
         "reasons": anomaly_block["reasons"],
         "anomaly_score": anomaly_block["score"],
     }

@@ -1,0 +1,78 @@
+dataset_id: mcsadc_rotor_bar
+version: "1.0.0"
+title: "LIAS MCSA Motor Broken Rotor Bar Dataset"
+domain: "electric_motors"
+machine_type: "three_phase_induction_motor_1_1kw"
+
+source:
+  organization: "LIAS Laboratory, University of Poitiers"
+  url: "https://github.com/LIAS-Lab/MCSA-DC"
+  citation: "Boushaba, A.; Cauet, S.; Chamroo, A.; Etien, E.; Rambault, L. 'Comparative Study between Physics-Informed CNN and PCA in Induction Motor Broken Bars MCSA Detection'. Sensors 2022, 22, 9494."
+
+license:
+  name: "Open Research Attribution License"
+  restrictions: "Academic citation required"
+
+sensors:
+  - name: "i_sa"
+    physical_quantity: "stator_current"
+    unit: "A"
+    sampling_rate_hz: 1428.57
+    location: "phase_a"
+    sensor_type: "hall_effect_sensor"
+  - name: "i_sb"
+    physical_quantity: "stator_current"
+    unit: "A"
+    sampling_rate_hz: 1428.57
+    location: "phase_b"
+    sensor_type: "hall_effect_sensor"
+  - name: "i_sc"
+    physical_quantity: "stator_current"
+    unit: "A"
+    sampling_rate_hz: 1428.57
+    location: "phase_c"
+    sensor_type: "hall_effect_sensor"
+  - name: "v_sa"
+    physical_quantity: "stator_voltage"
+    unit: "V"
+    sampling_rate_hz: 1428.57
+    location: "phase_a"
+  - name: "v_sb"
+    physical_quantity: "stator_voltage"
+    unit: "V"
+    sampling_rate_hz: 1428.57
+    location: "phase_b"
+  - name: "v_sc"
+    physical_quantity: "stator_voltage"
+    unit: "V"
+    sampling_rate_hz: 1428.57
+    location: "phase_c"
+  - name: "motor_speed_rad_s"
+    physical_quantity: "angular_velocity"
+    unit: "rad/s"
+    sampling_rate_hz: 1428.57
+    location: "rotor_shaft"
+  - name: "rotor_position_rad"
+    physical_quantity: "angular_position"
+    unit: "rad"
+    sampling_rate_hz: 1428.57
+    location: "rotor_shaft"
+
+operating_conditions:
+  - "low_speed: ~1435 RPM"
+  - "med_speed: ~1463 RPM"
+  - "high_speed: ~1491 RPM"
+  - "motor_power_kw: 1.1 kW"
+
+fault_types:
+  - "healthy (ccs0-17, ccs20-37, ccs40-57)"
+  - "broken_rotor_bar_1 (ccs60-77, ccs80-97, ccs100-117)"
+  - "broken_rotor_bar_2 (ccs120-137, ccs140-157, ccs160-177)"
+
+supported_tasks:
+  - "fault_classification"
+  - "anomaly_detection"
+
+limitations:
+  - "Artificially drilled holes in rotor bars"
+  - "Steady-state operation at fixed speed steps"

@@ -1,0 +1,94 @@
+dataset_id: electric_motor_temp
+version: "2.0.0"
+title: "Paderborn Electric Motor Temperature Dataset"
+domain: "electric_vehicles_pmsm"
+machine_type: "permanent_magnet_synchronous_motor"
+
+source:
+  organization: "Paderborn University, LEA Department"
+  url: "https://www.kaggle.com/datasets/wkirgsn/electric-motor-temperature"
+  citation: "Kirchgässner, W., Wallscheid, O., & Böcker, J. (2021). 'Empirical Evaluation of Electric Motor Thermal Modeling using Recurrent Neural Networks'. IEEE Transactions on Industrial Informatics."
+
+license:
+  name: "CC BY-SA 4.0"
+  restrictions: "Attribution and ShareAlike required"
+
+sensors:
+  - name: "u_d"
+    physical_quantity: "voltage"
+    unit: "V"
+    sampling_rate_hz: 2.0
+    location: "dq_frame"
+  - name: "u_q"
+    physical_quantity: "voltage"
+    unit: "V"
+    sampling_rate_hz: 2.0
+    location: "dq_frame"
+  - name: "i_d"
+    physical_quantity: "current"
+    unit: "A"
+    sampling_rate_hz: 2.0
+    location: "dq_frame"
+  - name: "i_q"
+    physical_quantity: "current"
+    unit: "A"
+    sampling_rate_hz: 2.0
+    location: "dq_frame"
+  - name: "motor_speed"
+    physical_quantity: "angular_velocity"
+    unit: "RPM"
+    sampling_rate_hz: 2.0
+    location: "rotor_shaft"
+  - name: "torque"
+    physical_quantity: "torque"
+    unit: "Nm"
+    sampling_rate_hz: 2.0
+    location: "rotor_shaft"
+  - name: "ambient"
+    physical_quantity: "temperature"
+    unit: "degC"
+    sampling_rate_hz: 2.0
+    location: "ambient_air"
+  - name: "coolant"
+    physical_quantity: "temperature"
+    unit: "degC"
+    sampling_rate_hz: 2.0
+    location: "cooling_jacket"
+  - name: "stator_winding"
+    physical_quantity: "temperature"
+    unit: "degC"
+    sampling_rate_hz: 2.0
+    location: "stator"
+  - name: "stator_tooth"
+    physical_quantity: "temperature"
+    unit: "degC"
+    sampling_rate_hz: 2.0
+    location: "stator"
+  - name: "stator_yoke"
+    physical_quantity: "temperature"
+    unit: "degC"
+    sampling_rate_hz: 2.0
+    location: "stator"
+  - name: "pm"
+    physical_quantity: "temperature"
+    unit: "degC"
+    sampling_rate_hz: 2.0
+    location: "rotor_magnets"
+
+operating_conditions:
+  - "motor_speed (0 to 6000 RPM)"
+  - "torque (-200 to 200 Nm)"
+  - "coolant temperature (10 to 80 degC)"
+  - "ambient temperature (10 to 40 degC)"
+
+fault_types:
+  - "pm_thermal_overload (pm > 100 degC)"
+  - "nominal"
+
+supported_tasks:
+  - "anomaly_detection"
+  - "auxiliary"
+
+limitations:
+  - "Does NOT contain discrete mechanical failure classes (no bearing or gear fault labels)"
+  - "Continuous dynamometer drive cycles, strictly thermal and electrical dynamics"

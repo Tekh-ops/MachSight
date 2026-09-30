@@ -1016,18 +1016,23 @@ Ordered by expected value.
 
 ---
 
-## Datasets
+## Industrial Datasets & Data Foundation Layer (Phase 5)
 
-| Path | Contents | Used by |
-|---|---|---|
-| `models/ml/healthy_telemetry.csv` | 600 healthy samples, 50 per bucket across 12 `(mode, pwm)` buckets | Source for `reference.pkl` |
-| `dataset/mcsadc-motor-rotorbarfailure-1_2023/` | 162 CSVs of real motor rotor-bar failure vibration/current waveforms | **Not yet integrated** — potential future source of realistic fault data |
-| `dataset/eletric_motor_temp_measures_v2.csv` | Electric motor thermal/electromagnetic measurements (`u_q`, `i_d`, `i_q`, winding/stator/yoke temps, torque, `profile_id`) | **Not yet integrated** — same |
+MachSight features a formal **Industrial Data Foundation Layer** (`data_foundation/`) with strongly-typed schemas, verified unit normalization, hierarchical fault taxonomy mapping, automated data quality validation, and data leakage detection.
 
-The two `dataset/` corpora are real industrial motor measurements and are the most promising
-route to validating the detector against genuine failure signatures rather than synthetic ones.
-Neither is referenced by any code path today. `dataset/eletric_motor_temp_measures_v2.csv` is
-gitignored; the MCSADC directory is tracked.
+### Supported Industrial Datasets
+
+| Dataset ID | Source / Machine | Sensors & Channels | Tasks Supported | Documentation |
+|---|---|---|---|---|
+| `cwru_bearing` | CWRU 2 HP Reliance Electric Motor | Drive-end & Fan-end accelerometers (g), 48 kHz / 12 kHz | `FAULT_CLASSIFICATION`, `ANOMALY_DETECTION` | [DATASET_CATALOG.md](file:///Users/drunkenstein/dev/async_hack/MachSight/docs/DATASET_CATALOG.md#21-cwru-bearing-vibration-dataset-cwru_bearing) |
+| `mcsadc_rotor_bar` | LIAS Laboratory 1.1 kW Induction Motor | Stator currents ($i_{sa}, i_{sb}, i_{sc}$), voltages ($v_{sa}, v_{sb}, v_{sc}$), speed, position | `FAULT_CLASSIFICATION`, `ANOMALY_DETECTION` | [DATASET_CATALOG.md](file:///Users/drunkenstein/dev/async_hack/MachSight/docs/DATASET_CATALOG.md#22-lias-mcsa-induction-motor-broken-rotor-bar-dataset-mcsadc_rotor_bar) |
+| `electric_motor_temp` | Paderborn University Automotive PMSM | d/q voltages, d/q currents, winding/core/PM temps, speed, torque | `ANOMALY_DETECTION`, `AUXILIARY` (Thermal monitoring) | [DATASET_CATALOG.md](file:///Users/drunkenstein/dev/async_hack/MachSight/docs/DATASET_CATALOG.md#23-paderborn-electric-motor-temperature-dataset-electric_motor_temp) |
+
+### Key Phase 5 Documentation:
+* [Phase 5 Overview & Implementation Report](file:///Users/drunkenstein/dev/async_hack/MachSight/docs/PHASE_5.md)
+* [Dataset Catalog](file:///Users/drunkenstein/dev/async_hack/MachSight/docs/DATASET_CATALOG.md)
+* [Normalized Dataset Schema & Fault Taxonomy](file:///Users/drunkenstein/dev/async_hack/MachSight/docs/DATASET_SCHEMA.md)
+* [Data Preprocessing & Leakage Prevention](file:///Users/drunkenstein/dev/async_hack/MachSight/docs/DATA_PREPROCESSING.md)
 
 ---
 

@@ -1,0 +1,47 @@
+dataset_id: cwru_bearing
+version: "1.0.0"
+title: "Case Western Reserve University Bearing Vibration Dataset"
+domain: "rotating_machinery"
+machine_type: "reliance_electric_2hp_motor"
+
+source:
+  organization: "Case Western Reserve University Bearing Data Center"
+  url: "https://engineering.case.edu/bearingdatacenter"
+  citation: "Loparo, K. A., 'Bearing Vibration Data Set', Case Western Reserve University, 2012."
+
+license:
+  name: "Public Domain / Open Academic Research"
+  restrictions: "Attribution requested in academic publications"
+
+sensors:
+  - name: "de_vibration"
+    physical_quantity: "vibration_acceleration"
+    unit: "g"
+    sampling_rate_hz: 48000.0
+    location: "drive_end"
+    sensor_type: "accelerometer"
+    description: "Drive end bearing housing acceleration"
+  - name: "fe_vibration"
+    physical_quantity: "vibration_acceleration"
+    unit: "g"
+    sampling_rate_hz: 48000.0
+    location: "fan_end"
+    sensor_type: "accelerometer"
+    description: "Fan end bearing housing acceleration"
+
+operating_conditions:
+  - "motor_load_hp: 1.0 HP"
+  - "motor_speed_rpm: ~1772 RPM"
+
+fault_types:
+  - "ball (0.007, 0.014, 0.021 inches defect diameter)"
+  - "inner_race (0.007, 0.014, 0.021 inches defect diameter)"
+  - "outer_race (0.007, 0.014, 0.021 inches defect diameter, 6 o'clock centered)"
+
+supported_tasks:
+  - "fault_classification"
+  - "anomaly_detection"
+
+limitations:
+  - "Artificial EDM electro-discharge machining pit faults, not naturally grown fatigue spalls"
+  - "Single drive-end bearing tested at a time under steady-state load"
