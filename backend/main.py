@@ -52,6 +52,12 @@ from ml.classify import classify
 from ml.pipeline import analyze, build_evidence
 from ml import reasoner
 
+# Phase 2 — Intelligent diagnostic reasoning
+from ml.temporal_evidence import extract_diagnostic_evidence, MachineOperatingState, Persistence
+from ml.hypothesis_scorer import score_hypotheses
+from ml.diagnostic_lifecycle import diagnostic_lifecycle_registry, DiagnosticTrigger
+from ml.diagnostic_reasoner import reason_v2, reason_fallback_v2, build_recovery_result
+
 import config
 import db
 import ml_stub
@@ -206,7 +212,21 @@ async def trigger_investigation(
         )
         reason_fn = ml_stub.reason if use_stub else reasoner.reason
 
-        # --- Build initial evidence ---
+        # --- Phase 2: Extract temporal evidence packet ---
+        recent_window_for_evidence = list(machine.rolling_buffer)[-config.ANALYSIS_WINDOW_SIZE:]
+        window_seconds = len(recent_window_for_evidence) * 0.5  # ~0.5s per sample
+        diag_packet = extract_diagnostic_evidence(
+            machine_id=machine_id,
+            window=recent_window_for_evidence,
+            processed_latest=processed,
+            matches=result.get("matches", []),
+            window_seconds=max(window_seconds, 2.0),
+        )
+
+        # --- Phase 2: Get lifecycle tracker ---
+        lifecycle = diagnostic_lifecycle_registry.get(machine_id)
+
+        # --- Build initial evidence (Phase 1 backward compat) ---
         evidence = build_evidence(
             raw=reading,
             processed=processed,
@@ -296,6 +316,20 @@ async def trigger_investigation(
                 }
                 db.insert("investigations", diag_row)
                 await broadcast("diagnosis", diag_row)
+
+                # --- Phase 2: Run intelligent reasoning and emit diagnostic_update ---
+                try:
+                    if use_stub:
+                        diag_v2 = reason_fallback_v2(diag_packet, fallback_reason="Stub mode")
+                    else:
+                        diag_v2 = await loop.run_in_executor(None, reason_v2, diag_packet)
+                    diag_v2["trace_id"] = trace_id
+                    lifecycle.mark_diagnosed()
+                    await broadcast("diagnostic_update", {"diagnosis": diag_v2})
+                except Exception as _e2:
+                    logger.warning(f"Phase 2 reasoning error (non-fatal): {_e2}")
+
+
                 return
 
             if action == "request_more_data":
@@ -704,6 +738,27 @@ def get_status():
 def get_machines():
     """Returns the list of known machines and their current state summary."""
     return {"machines": machine_registry.summary()}
+
+
+@app.get("/api/lifecycle")
+def get_lifecycle():
+    """Returns the diagnostic lifecycle state for all known machines (Phase 2)."""
+    return {"lifecycles": diagnostic_lifecycle_registry.summary()}
+
+
+@app.get("/api/lifecycle/{machine_id}")
+def get_machine_lifecycle(machine_id: str):
+    """Returns the diagnostic lifecycle state for a specific machine (Phase 2)."""
+    lc = diagnostic_lifecycle_registry.get(machine_id)
+    return lc.to_dict()
+
+
+@app.get("/api/hypotheses")
+def get_hypotheses():
+    """Returns the engineering hypothesis catalog entries (Phase 2)."""
+    from ml.hypothesis_scorer import get_catalog_hypotheses
+    return {"hypotheses": get_catalog_hypotheses()}
+
 
 
 # ---------------------------------------------------------------------------

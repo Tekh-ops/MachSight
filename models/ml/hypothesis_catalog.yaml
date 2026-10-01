@@ -1,0 +1,367 @@
+# MachSight Engineering Hypothesis Catalog
+# Version-controlled knowledge base of candidate fault hypotheses.
+# Each entry defines expected signal patterns, scoring weights, and recommended actions.
+# This is NOT RAG — it is a deterministic engineering knowledge catalog.
+# Future RAG/KG context providers may supplement this without changing the scoring logic.
+
+version: "1.0"
+asset_type: rc_vehicle
+
+hypotheses:
+
+  - id: DRIVETRAIN_OBSTRUCTION
+    label: "Possible drivetrain obstruction"
+    description: >
+      Mechanical resistance is preventing normal wheel rotation.
+      The motor remains commanded but encounters abnormally high load,
+      causing current to rise sharply while RPM and vehicle velocity collapse.
+    affected_subsystem: drivetrain
+    severity: HIGH
+
+    supporting_patterns:
+      - id: high_motor_command
+        description: "Motor PWM command remains high"
+        weight: 0.30
+      - id: elevated_current
+        description: "Motor current increased significantly above healthy baseline"
+        weight: 0.25
+      - id: low_rpm
+        description: "Wheel RPM collapsed below stall threshold"
+        weight: 0.25
+      - id: falling_velocity
+        description: "Vehicle velocity decreased toward zero"
+        weight: 0.15
+      - id: persistent_condition
+        description: "Condition persisted across observation window"
+        weight: 0.10
+
+    contradicting_patterns:
+      - id: motor_command_zero
+        description: "Motor PWM command is zero (expected idle state)"
+        weight: -0.30
+      - id: normal_rpm
+        description: "RPM remains near healthy baseline"
+        weight: -0.40
+      - id: normal_current
+        description: "Current remains near healthy baseline"
+        weight: -0.35
+
+    recommended_checks:
+      - priority: 1
+        action: "Stop or reduce motor command if elevated current persists."
+      - priority: 2
+        action: "Inspect wheels and drive axle for external obstruction."
+      - priority: 3
+        action: "Check axle and gear train for mechanical binding."
+      - priority: 4
+        action: "Inspect gear/motor coupling for damage or misalignment."
+      - priority: 5
+        action: "Run a low-throttle functional test and verify current/RPM return to baseline."
+
+    possible_actions:
+      - "Stop sustained high-current operation."
+      - "Remove mechanical obstruction from drivetrain."
+      - "Inspect drivetrain before restarting at full power."
+
+  - id: MOTOR_OVERLOAD
+    label: "Motor overload / excessive mechanical load"
+    description: >
+      The motor is drawing abnormally high current under load.
+      This may be caused by drivetrain friction, excessive grade, or partial blockage.
+      RPM may be partially reduced but not fully collapsed as in a complete jam.
+    affected_subsystem: motor
+    severity: HIGH
+
+    supporting_patterns:
+      - id: elevated_current
+        description: "Motor current elevated significantly above baseline"
+        weight: 0.35
+      - id: high_motor_command
+        description: "Motor PWM command remains high"
+        weight: 0.25
+      - id: reduced_rpm
+        description: "RPM below expected baseline for the commanded PWM"
+        weight: 0.20
+      - id: persistent_condition
+        description: "Condition persisted across observation window"
+        weight: 0.10
+
+    contradicting_patterns:
+      - id: normal_current
+        description: "Current remains near healthy baseline"
+        weight: -0.40
+      - id: motor_command_zero
+        description: "Motor command is zero"
+        weight: -0.30
+      - id: rpm_collapsed
+        description: "RPM completely collapsed — more consistent with full drivetrain jam"
+        weight: -0.15
+
+    recommended_checks:
+      - priority: 1
+        action: "Check drivetrain for unusual mechanical resistance."
+      - priority: 2
+        action: "Inspect surface and terrain for high rolling resistance."
+      - priority: 3
+        action: "Verify motor temperature if sensor available."
+      - priority: 4
+        action: "Perform loaded current measurement at known throttle levels."
+
+    possible_actions:
+      - "Reduce motor command to avoid thermal damage."
+      - "Identify and address source of excessive load."
+
+  - id: MOTOR_DRAG
+    label: "Mechanical drag / drivetrain friction"
+    description: >
+      Elevated drivetrain friction is causing the motor to draw more current
+      than normal while RPM is still non-zero. The current/RPM ratio is abnormally high
+      relative to the healthy baseline for the operating condition.
+    affected_subsystem: drivetrain
+    severity: MEDIUM
+
+    supporting_patterns:
+      - id: elevated_current_rpm_ratio
+        description: "Current/RPM ratio elevated above healthy baseline"
+        weight: 0.35
+      - id: reduced_rpm
+        description: "RPM slightly below baseline but wheel still rotating"
+        weight: 0.25
+      - id: elevated_current
+        description: "Current moderately elevated"
+        weight: 0.20
+      - id: high_motor_command
+        description: "Motor command active"
+        weight: 0.10
+
+    contradicting_patterns:
+      - id: rpm_collapsed
+        description: "RPM fully collapsed — consistent with jam, not drag"
+        weight: -0.30
+      - id: normal_current
+        description: "Current at or near healthy baseline"
+        weight: -0.35
+
+    recommended_checks:
+      - priority: 1
+        action: "Inspect wheel bearings for wear or dirt ingestion."
+      - priority: 2
+        action: "Check axle alignment and lubrication."
+      - priority: 3
+        action: "Inspect drive train for partial obstruction."
+
+    possible_actions:
+      - "Lubricate drivetrain components."
+      - "Inspect and replace worn bearings."
+
+  - id: WHEEL_SLIP
+    label: "Wheel slip / loss of traction"
+    description: >
+      Wheels are spinning faster than expected for the vehicle actual forward progress.
+      RPM is high but velocity is low, suggesting the wheels are not generating traction.
+    affected_subsystem: drivetrain
+    severity: MEDIUM
+
+    supporting_patterns:
+      - id: high_rpm
+        description: "RPM at or above healthy baseline"
+        weight: 0.35
+      - id: low_velocity
+        description: "Vehicle velocity low relative to RPM"
+        weight: 0.35
+      - id: normal_current
+        description: "Current near baseline (unloaded spin)"
+        weight: 0.20
+
+    contradicting_patterns:
+      - id: elevated_current
+        description: "Elevated current suggests load, not free spin"
+        weight: -0.25
+      - id: low_rpm
+        description: "Low RPM contradicts free wheel spin hypothesis"
+        weight: -0.40
+
+    recommended_checks:
+      - priority: 1
+        action: "Inspect surface for low-traction conditions."
+      - priority: 2
+        action: "Check wheel tread for wear."
+
+    possible_actions:
+      - "Reduce speed on low-traction surfaces."
+      - "Inspect wheel condition."
+
+  - id: RPM_SENSOR_FAILURE
+    label: "RPM sensor failure or disconnection"
+    description: >
+      The wheel RPM sensor is reporting anomalous values that do not match
+      the expected physical state. Vehicle velocity and current remain normal
+      while RPM is unexpectedly zero or erratic.
+    affected_subsystem: sensor
+    severity: MEDIUM
+
+    supporting_patterns:
+      - id: rpm_zero_with_normal_current
+        description: "RPM reads zero while current is near normal baseline"
+        weight: 0.40
+      - id: rpm_zero_with_normal_velocity
+        description: "RPM reads zero while vehicle appears to be moving"
+        weight: 0.35
+      - id: motor_command_active
+        description: "Motor command is active, expecting non-zero RPM"
+        weight: 0.15
+
+    contradicting_patterns:
+      - id: elevated_current
+        description: "Elevated current with zero RPM suggests physical stall, not sensor failure"
+        weight: -0.40
+      - id: velocity_also_zero
+        description: "Vehicle velocity also zero — physical stop is more plausible"
+        weight: -0.35
+
+    recommended_checks:
+      - priority: 1
+        action: "Inspect RPM sensor wiring and connection."
+      - priority: 2
+        action: "Verify sensor mounting and magnet alignment."
+      - priority: 3
+        action: "Check sensor output under manual wheel rotation."
+
+    possible_actions:
+      - "Replace or reconnect RPM sensor."
+      - "Validate sensor calibration."
+
+  - id: CURRENT_SENSOR_FAILURE
+    label: "Current sensor anomaly"
+    description: >
+      The current sensor is reporting values inconsistent with the expected
+      electromechanical state. RPM and velocity appear normal while current
+      is anomalously high or reads implausible values.
+    affected_subsystem: sensor
+    severity: MEDIUM
+
+    supporting_patterns:
+      - id: current_spike_with_normal_rpm
+        description: "Current suddenly high while RPM and velocity remain normal"
+        weight: 0.40
+      - id: current_spike_with_normal_velocity
+        description: "Velocity consistent with normal operation despite current reading"
+        weight: 0.30
+
+    contradicting_patterns:
+      - id: rpm_also_reduced
+        description: "RPM also reduced — physical load explanation is more likely"
+        weight: -0.35
+      - id: velocity_also_reduced
+        description: "Velocity also reduced — physical load is more likely"
+        weight: -0.30
+
+    recommended_checks:
+      - priority: 1
+        action: "Inspect current sensor wiring and shunt."
+      - priority: 2
+        action: "Verify current sensor calibration against known load."
+
+    possible_actions:
+      - "Replace or recalibrate current sensor."
+
+  - id: ULTRASONIC_SENSOR_FAILURE
+    label: "Ultrasonic distance sensor failure"
+    description: >
+      The ultrasonic distance sensor is returning values outside the physical
+      measurement range (2-400 cm), frozen readings, or implausible jumps.
+    affected_subsystem: sensor
+    severity: LOW
+
+    supporting_patterns:
+      - id: distance_out_of_range
+        description: "Distance reading outside physical sensor range [2, 400] cm"
+        weight: 0.50
+      - id: distance_frozen
+        description: "Distance reading frozen with zero variance while vehicle is moving"
+        weight: 0.35
+      - id: distance_large_jump
+        description: "Implausible large jump in consecutive distance readings"
+        weight: 0.25
+
+    contradicting_patterns:
+      - id: distance_normal
+        description: "Distance reading is within normal operating range with natural variance"
+        weight: -0.40
+
+    recommended_checks:
+      - priority: 1
+        action: "Inspect ultrasonic sensor wiring and power supply."
+      - priority: 2
+        action: "Check sensor mounting angle and target surface."
+      - priority: 3
+        action: "Verify sensor output with known distance target."
+
+    possible_actions:
+      - "Replace or reconnect ultrasonic sensor."
+
+  - id: LOW_BATTERY_VOLTAGE_SAG
+    label: "Low battery / voltage sag"
+    description: >
+      Battery voltage is below normal operating range, causing reduced motor
+      performance. RPM and velocity may be lower than expected for the commanded
+      PWM level.
+    affected_subsystem: power
+    severity: HIGH
+
+    supporting_patterns:
+      - id: low_voltage
+        description: "Supply voltage below healthy operating threshold"
+        weight: 0.45
+      - id: reduced_rpm_at_normal_command
+        description: "RPM reduced relative to expected for commanded PWM"
+        weight: 0.25
+      - id: elevated_current
+        description: "Current elevated as motor attempts to maintain output"
+        weight: 0.15
+
+    contradicting_patterns:
+      - id: normal_voltage
+        description: "Voltage within normal range"
+        weight: -0.50
+      - id: rpm_collapsed
+        description: "RPM fully collapsed — more consistent with mechanical jam"
+        weight: -0.20
+
+    recommended_checks:
+      - priority: 1
+        action: "Measure battery voltage under load."
+      - priority: 2
+        action: "Check battery state of charge and cell health."
+      - priority: 3
+        action: "Inspect battery connector and wiring for resistance."
+
+    possible_actions:
+      - "Charge or replace battery before continued operation."
+
+  - id: UNKNOWN_MECHANICAL_FAULT
+    label: "Unknown mechanical fault"
+    description: >
+      Telemetry shows abnormal behavior that does not cleanly match any
+      known fault signature. Physical inspection is required to identify
+      the underlying cause.
+    affected_subsystem: unknown
+    severity: MEDIUM
+
+    supporting_patterns:
+      - id: anomalous_behavior
+        description: "Telemetry deviates significantly from healthy baseline"
+        weight: 0.30
+
+    contradicting_patterns: []
+
+    recommended_checks:
+      - priority: 1
+        action: "Perform visual inspection of all mechanical components."
+      - priority: 2
+        action: "Run a low-speed functional test and record telemetry."
+      - priority: 3
+        action: "Compare telemetry against healthy baseline recordings."
+
+    possible_actions:
+      - "Halt operation pending physical inspection."
