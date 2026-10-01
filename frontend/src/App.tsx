@@ -302,7 +302,12 @@ export function App(): ReactElement {
                       </div>
 
                       <div className="text-xs font-mono text-zinc-700 dark:text-zinc-300">
-                        <strong>Reasoning:</strong> {d.reasoning}
+                        <strong>Reasoning:</strong>{' '}
+                        {typeof d.reasoning === 'string'
+                          ? d.reasoning
+                          : Array.isArray(d.reasoning)
+                          ? d.reasoning.map((r: any) => (typeof r === 'string' ? r : r?.statement || JSON.stringify(r))).join(' ')
+                          : ''}
                       </div>
 
                       {d.evidence_used && d.evidence_used.length > 0 && (
@@ -313,7 +318,10 @@ export function App(): ReactElement {
 
                       {d.recommended_action && (
                         <div className="text-xs font-mono text-blue-600 dark:text-blue-400">
-                          <strong>Action:</strong> {d.recommended_action}
+                          <strong>Action:</strong>{' '}
+                          {Array.isArray(d.recommended_action)
+                            ? d.recommended_action.join('; ')
+                            : d.recommended_action}
                         </div>
                       )}
                     </div>

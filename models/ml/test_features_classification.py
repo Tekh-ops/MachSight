@@ -31,8 +31,8 @@ def test_process_reading_contract(reference):
     raw = {
         "car_id": "car-01",
         "distance_cm": 85.0,
-        "current_a": 1.75,
-        "rpm": 305.0,
+        "current_a": 1.98,
+        "rpm": 282.0,
         "pwm_command": 200,
         "mode": "forward",
     }
@@ -234,14 +234,14 @@ def test_sensor_fault_frozen_distance(reference):
     """Verifies that a frozen distance sensor while vehicle is moving triggers 'sensor_fault'."""
     # Moving forward at PWM 200, but distance never changes (frozen at 45.0 cm)
     window = [
-        {"distance_cm": 45.0, "current_a": 1.75, "rpm": 305.0, "pwm_command": 200, "mode": "forward"}
+        {"distance_cm": 45.0, "current_a": 1.98, "rpm": 282.0, "pwm_command": 200, "mode": "forward"}
         for _ in range(5)
     ]
     test_reading = {
         "car_id": "car-01",
         "distance_cm": 45.0,
-        "current_a": 1.76,
-        "rpm": 304.0,
+        "current_a": 1.99,
+        "rpm": 281.0,
         "pwm_command": 200,
         "mode": "forward",
     }
@@ -260,8 +260,8 @@ def test_motor_mismatch_skipped_on_single_motor(reference, caplog):
     raw = {
         "car_id": "car-01",
         "distance_cm": 80.0,
-        "current_a": 1.75,
-        "rpm": 305.0,
+        "current_a": 1.98,
+        "rpm": 282.0,
         "pwm_command": 200,
         "mode": "forward",
     }

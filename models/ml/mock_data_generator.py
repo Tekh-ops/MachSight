@@ -18,18 +18,18 @@ HEALTHY_PROFILES: Dict[str, Dict[int, Dict[str, float]]] = {
     },
     "forward": {
         100: {"current_mean": 0.85, "current_std": 0.04, "rpm_mean": 125.0, "rpm_std": 4.5, "distance_mean": 85.0},
-        150: {"current_mean": 1.25, "current_std": 0.06, "rpm_mean": 210.0, "rpm_std": 6.0, "distance_mean": 80.0},
-        200: {"current_mean": 1.75, "current_std": 0.08, "rpm_mean": 305.0, "rpm_std": 8.0, "distance_mean": 75.0},
+        150: {"current_mean": 1.52, "current_std": 0.08, "rpm_mean": 211.0, "rpm_std": 7.0, "distance_mean": 80.0},
+        200: {"current_mean": 1.98, "current_std": 0.10, "rpm_mean": 282.0, "rpm_std": 10.0, "distance_mean": 75.0},
     },
     "turning_left": {
         100: {"current_mean": 1.05, "current_std": 0.05, "rpm_mean": 105.0, "rpm_std": 5.0, "distance_mean": 60.0},
-        150: {"current_mean": 1.50, "current_std": 0.07, "rpm_mean": 180.0, "rpm_std": 7.0, "distance_mean": 55.0},
-        200: {"current_mean": 2.10, "current_std": 0.09, "rpm_mean": 265.0, "rpm_std": 9.0, "distance_mean": 50.0},
+        150: {"current_mean": 1.80, "current_std": 0.08, "rpm_mean": 180.0, "rpm_std": 7.0, "distance_mean": 55.0},
+        200: {"current_mean": 2.40, "current_std": 0.11, "rpm_mean": 265.0, "rpm_std": 9.0, "distance_mean": 50.0},
     },
     "turning_right": {
         100: {"current_mean": 1.05, "current_std": 0.05, "rpm_mean": 105.0, "rpm_std": 5.0, "distance_mean": 60.0},
-        150: {"current_mean": 1.50, "current_std": 0.07, "rpm_mean": 180.0, "rpm_std": 7.0, "distance_mean": 55.0},
-        200: {"current_mean": 2.10, "current_std": 0.09, "rpm_mean": 265.0, "rpm_std": 9.0, "distance_mean": 50.0},
+        150: {"current_mean": 1.80, "current_std": 0.08, "rpm_mean": 180.0, "rpm_std": 7.0, "distance_mean": 55.0},
+        200: {"current_mean": 2.40, "current_std": 0.11, "rpm_mean": 265.0, "rpm_std": 9.0, "distance_mean": 50.0},
     },
     "braking": {
         0: {"current_mean": 0.65, "current_std": 0.08, "rpm_mean": 15.0, "rpm_std": 4.0, "distance_mean": 45.0},

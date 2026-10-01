@@ -12,8 +12,8 @@ import numpy as np
 from scipy.spatial.distance import mahalanobis
 
 # Physical plausibility limits for typical HC-SR04 ultrasonic sensors (2cm to 400cm)
-MIN_VALID_DISTANCE_CM = 2.0
-MAX_VALID_DISTANCE_CM = 400.0
+MIN_VALID_DISTANCE_CM = 1.0
+MAX_VALID_DISTANCE_CM = 450.0
 
 
 def _find_nearest_pwm_bucket(

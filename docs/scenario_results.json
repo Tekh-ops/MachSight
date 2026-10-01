@@ -1,17 +1,17 @@
 {
   "scenarios": {
     "healthy_cruise": {
-      "packets_received": 134,
-      "anomalies_detected": 46,
-      "diagnoses_triggered": 4,
-      "avg_rpm": 225.0,
-      "avg_current_a": 1.33,
-      "passed": false
+      "packets_received": 164,
+      "anomalies_detected": 6,
+      "diagnoses_triggered": 0,
+      "avg_rpm": 281.3,
+      "avg_current_a": 1.97,
+      "passed": true
     },
     "motor_drag": {
       "fault_injected": "motor_drag",
       "diagnosis_triggered": true,
-      "diagnostic_latency_ms": 1528.0,
+      "diagnostic_latency_ms": 2156.9,
       "diagnosis_text": "Mechanical drag / drivetrain friction resistance",
       "confidence": 0.98,
       "suspected_component": {
@@ -24,20 +24,16 @@
     "drivetrain_jam": {
       "fault_injected": "drivetrain_jam",
       "diagnosis_triggered": true,
-      "diagnostic_latency_ms": 1622.6,
+      "diagnostic_latency_ms": 141.1,
       "diagnosis_text": "Mechanical drag / drivetrain friction resistance",
-      "confidence": 0.98,
-      "suspected_component": {
-        "component_id": "wheel_bearing_axle",
-        "display_name": "Wheel bearing / axle",
-        "system": "drive_train"
-      },
+      "confidence": 0.65,
+      "suspected_component": null,
       "passed": true
     },
     "sensor_fault": {
       "fault_injected": "ultrasonic_stuck",
       "diagnosis_triggered": true,
-      "diagnostic_latency_ms": 2016.3,
+      "diagnostic_latency_ms": 243.1,
       "diagnosis_text": "Ultrasonic distance sensor failure / invalid reading",
       "confidence": 0.96,
       "suspected_component": {
@@ -48,21 +44,21 @@
       "passed": true
     },
     "recovery": {
-      "packets_received": 210,
-      "anomalies_detected": 59,
-      "recovered_rpm": 224.12,
-      "recovered_current_a": 1.306,
-      "recovered_distance_cm": 399.25,
-      "passed": false
+      "packets_received": 214,
+      "anomalies_detected": 0,
+      "recovered_rpm": 277.96,
+      "recovered_current_a": 1.995,
+      "recovered_distance_cm": 399.24,
+      "passed": true
     }
   },
   "latencies": {
     "telemetry_latency_ms": {
-      "count": 1183,
-      "min": 1.72,
-      "median_p50": 3.11,
-      "p95": 16.83,
-      "max": 169.38
+      "count": 1155,
+      "min": 2.02,
+      "median_p50": 3.73,
+      "p95": 11.32,
+      "max": 110.77
     }
   },
   "pipeline_checks": {
@@ -70,6 +66,6 @@
     "machsight_to_ml": true,
     "ml_to_diagnostic": true,
     "diagnostic_to_frontend": true,
-    "full_e2e": false
+    "full_e2e": true
   }
 }

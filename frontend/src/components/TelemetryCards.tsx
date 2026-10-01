@@ -4,141 +4,135 @@ import { formatValue, formatTimeAgo } from '../utils/formatters';
 
 interface Props {
   readonly latestTelemetry: TelemetryPoint | null;
-  readonly highlightMetrics: readonly string[];
-  readonly isAnomaly: boolean;
+  readonly highlightMetrics?: readonly string[];
+  readonly isAnomaly?: boolean;
 }
 
 export const TelemetryCards: React.FC<Props> = ({
   latestTelemetry,
-  highlightMetrics,
-  isAnomaly,
+  highlightMetrics = [],
+  isAnomaly = false,
 }) => {
-  const isCurrentHighlighted = highlightMetrics.includes('current_a') && isAnomaly;
-  const isRpmHighlighted = highlightMetrics.includes('rpm') && isAnomaly;
-  const isDistHighlighted = (highlightMetrics.includes('distance_cm') && isAnomaly) ||
-    (latestTelemetry?.distance_plausible === 0);
-
-  const timeAgo = latestTelemetry ? formatTimeAgo(latestTelemetry.timestamp) : 'Waiting for telemetry...';
+  const timeAgo = latestTelemetry ? formatTimeAgo(latestTelemetry.timestamp) : 'Waiting for data';
 
   return (
-    <div data-testid="telemetry-cards" className="grid grid-cols-1 md:grid-cols-3 gap-4">
-      {/* 1. Motor Current Card */}
-      <div
-        data-testid="telemetry-card-current"
-        className={`border p-4 bg-white dark:bg-zinc-900 shadow-sm transition-colors ${
-          isCurrentHighlighted
-            ? 'border-red-500 bg-red-50/10 dark:bg-red-950/20'
-            : 'border-zinc-300 dark:border-zinc-800'
-        }`}
-      >
-        <div className="flex items-center justify-between mb-2">
-          <div className="flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full bg-blue-500" />
-            <span className="font-mono text-xs font-bold text-zinc-700 dark:text-zinc-300 uppercase tracking-wide">
-              MOTOR CURRENT
-            </span>
-          </div>
-          {isCurrentHighlighted && (
-            <span className="px-1.5 py-0.5 text-[10px] font-mono font-bold bg-red-500/20 text-red-400 border border-red-500/40 rounded animate-pulse">
-              ANOMALOUS
-            </span>
-          )}
+    <div
+      data-testid="telemetry-cards"
+      className="border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 rounded-sm p-4 shadow-sm"
+    >
+      <div className="flex items-center justify-between mb-3 border-b border-zinc-100 dark:border-zinc-800 pb-2">
+        <div className="flex items-center gap-2">
+          <span className="w-2 h-2 rounded-full bg-zinc-400" />
+          <h3 className="font-mono text-xs font-bold text-zinc-700 dark:text-zinc-300 uppercase tracking-wide">
+            LIVE TELEMETRY STREAM (SUPPORTING VIEW)
+          </h3>
         </div>
-
-        <div className="flex items-baseline gap-2 my-2">
-          <span className="font-mono text-3xl font-extrabold text-zinc-900 dark:text-zinc-100">
-            {formatValue(latestTelemetry?.current_a, 2)}
-          </span>
-          <span className="font-mono text-sm font-semibold text-zinc-500">A</span>
-        </div>
-
-        <div className="flex items-center justify-between text-[11px] font-mono text-zinc-500 pt-2 border-t border-zinc-100 dark:border-zinc-800">
-          <span>Freshness: {timeAgo}</span>
-          {latestTelemetry?.current_zscore !== undefined && (
-            <span>Z-Score: {formatValue(latestTelemetry.current_zscore, 2)}</span>
-          )}
-        </div>
+        <span className="font-mono text-[11px] text-zinc-500">
+          Freshness: {timeAgo}
+        </span>
       </div>
 
-      {/* 2. Wheel RPM Card */}
-      <div
-        data-testid="telemetry-card-rpm"
-        className={`border p-4 bg-white dark:bg-zinc-900 shadow-sm transition-colors ${
-          isRpmHighlighted
-            ? 'border-red-500 bg-red-50/10 dark:bg-red-950/20'
-            : 'border-zinc-300 dark:border-zinc-800'
-        }`}
-      >
-        <div className="flex items-center justify-between mb-2">
-          <div className="flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full bg-emerald-500" />
-            <span className="font-mono text-xs font-bold text-zinc-700 dark:text-zinc-300 uppercase tracking-wide">
-              WHEEL RPM
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 font-mono">
+        {/* 1. Motor Current */}
+        <div
+          data-testid="telemetry-card-current"
+          className="p-3 bg-zinc-50/60 dark:bg-zinc-950/40 border border-zinc-200 dark:border-zinc-800/80 rounded"
+        >
+          <div className="text-[10px] text-zinc-500 uppercase font-semibold">
+            MOTOR CURRENT
+          </div>
+          <div className="flex items-baseline gap-1.5 my-1">
+            <span className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">
+              {formatValue(latestTelemetry?.current_a, 2)}
+            </span>
+            <span className="text-xs text-zinc-500">A</span>
+          </div>
+          <div className="text-[10px] text-zinc-400 flex items-center justify-between">
+            <span>Ref: ~1.60 A</span>
+            {latestTelemetry?.current_zscore !== undefined && (
+              <span>z={latestTelemetry.current_zscore.toFixed(1)}</span>
+            )}
+          </div>
+        </div>
+
+        {/* 2. Wheel RPM */}
+        <div
+          data-testid="telemetry-card-rpm"
+          className="p-3 bg-zinc-50/60 dark:bg-zinc-950/40 border border-zinc-200 dark:border-zinc-800/80 rounded"
+        >
+          <div className="text-[10px] text-zinc-500 uppercase font-semibold">
+            WHEEL RPM
+          </div>
+          <div className="flex items-baseline gap-1.5 my-1">
+            <span className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">
+              {formatValue(latestTelemetry?.rpm, 1)}
+            </span>
+            <span className="text-xs text-zinc-500">RPM</span>
+          </div>
+          <div className="text-[10px] text-zinc-400 flex items-center justify-between">
+            <span>Ref: ~225 RPM</span>
+            {latestTelemetry?.rpm_zscore !== undefined && (
+              <span>z={latestTelemetry.rpm_zscore.toFixed(1)}</span>
+            )}
+          </div>
+        </div>
+
+        {/* 3. Ultrasonic Distance */}
+        <div
+          data-testid="telemetry-card-distance"
+          className="p-3 bg-zinc-50/60 dark:bg-zinc-950/40 border border-zinc-200 dark:border-zinc-800/80 rounded"
+        >
+          <div className="text-[10px] text-zinc-500 uppercase font-semibold">
+            ULTRASONIC RANGE
+          </div>
+          <div className="flex items-baseline gap-1.5 my-1">
+            <span className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">
+              {formatValue(latestTelemetry?.distance_cm, 1)}
+            </span>
+            <span className="text-xs text-zinc-500">cm</span>
+          </div>
+          <div className="text-[10px] text-zinc-400 flex items-center justify-between">
+            <span>Plausible: {latestTelemetry?.distance_plausible !== 0 ? 'YES' : 'NO'}</span>
+          </div>
+        </div>
+
+        {/* 4. Motor Command */}
+        <div
+          data-testid="telemetry-card-command"
+          className="p-3 bg-zinc-50/60 dark:bg-zinc-950/40 border border-zinc-200 dark:border-zinc-800/80 rounded"
+        >
+          <div className="text-[10px] text-zinc-500 uppercase font-semibold">
+            THROTTLE COMMAND
+          </div>
+          <div className="flex items-baseline gap-1.5 my-1">
+            <span className="text-2xl font-bold text-zinc-900 dark:text-zinc-100 uppercase">
+              {latestTelemetry?.pwm_command ? `PWM ${latestTelemetry.pwm_command}` : 'OFF'}
             </span>
           </div>
-          {isRpmHighlighted && (
-            <span className="px-1.5 py-0.5 text-[10px] font-mono font-bold bg-red-500/20 text-red-400 border border-red-500/40 rounded animate-pulse">
-              ANOMALOUS
-            </span>
-          )}
-        </div>
-
-        <div className="flex items-baseline gap-2 my-2">
-          <span className="font-mono text-3xl font-extrabold text-zinc-900 dark:text-zinc-100">
-            {formatValue(latestTelemetry?.rpm, 1)}
-          </span>
-          <span className="font-mono text-sm font-semibold text-zinc-500">RPM</span>
-        </div>
-
-        <div className="flex items-center justify-between text-[11px] font-mono text-zinc-500 pt-2 border-t border-zinc-100 dark:border-zinc-800">
-          <span>Freshness: {timeAgo}</span>
-          {latestTelemetry?.rpm_zscore !== undefined && (
-            <span>Z-Score: {formatValue(latestTelemetry.rpm_zscore, 2)}</span>
-          )}
-        </div>
-      </div>
-
-      {/* 3. Ultrasonic Distance Card */}
-      <div
-        data-testid="telemetry-card-distance"
-        className={`border p-4 bg-white dark:bg-zinc-900 shadow-sm transition-colors ${
-          isDistHighlighted
-            ? 'border-amber-500 bg-amber-50/10 dark:bg-amber-950/20'
-            : 'border-zinc-300 dark:border-zinc-800'
-        }`}
-      >
-        <div className="flex items-center justify-between mb-2">
-          <div className="flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full bg-purple-500" />
-            <span className="font-mono text-xs font-bold text-zinc-700 dark:text-zinc-300 uppercase tracking-wide">
-              ULTRASONIC RANGE
-            </span>
+          <div className="text-[10px] text-zinc-400">
+            Mode: <span className="uppercase text-zinc-600 dark:text-zinc-300 font-semibold">{latestTelemetry?.mode || 'IDLE'}</span>
           </div>
-          {latestTelemetry?.distance_plausible === 0 ? (
-            <span className="px-1.5 py-0.5 text-[10px] font-mono font-bold bg-purple-500/20 text-purple-300 border border-purple-500/40 rounded">
-              IMPLAUSIBLE
-            </span>
-          ) : isDistHighlighted ? (
-            <span className="px-1.5 py-0.5 text-[10px] font-mono font-bold bg-amber-500/20 text-amber-400 border border-amber-500/40 rounded">
-              FLAGGED
-            </span>
-          ) : (
-            <span className="px-1.5 py-0.5 text-[10px] font-mono text-emerald-500">
-              PLAUSIBLE
-            </span>
-          )}
         </div>
 
-        <div className="flex items-baseline gap-2 my-2">
-          <span className="font-mono text-3xl font-extrabold text-zinc-900 dark:text-zinc-100">
-            {formatValue(latestTelemetry?.distance_cm, 1)}
-          </span>
-          <span className="font-mono text-sm font-semibold text-zinc-500">cm</span>
-        </div>
-
-        <div className="flex items-center justify-between text-[11px] font-mono text-zinc-500 pt-2 border-t border-zinc-100 dark:border-zinc-800">
-          <span>Freshness: {timeAgo}</span>
-          <span>Sensor: Front Array</span>
+        {/* 5. Vehicle Velocity */}
+        <div
+          data-testid="telemetry-card-velocity"
+          className="p-3 bg-zinc-50/60 dark:bg-zinc-950/40 border border-zinc-200 dark:border-zinc-800/80 rounded"
+        >
+          <div className="text-[10px] text-zinc-500 uppercase font-semibold">
+            VEHICLE VELOCITY
+          </div>
+          <div className="flex items-baseline gap-1.5 my-1">
+            <span className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">
+              {latestTelemetry?.velocity_mps !== null && latestTelemetry?.velocity_mps !== undefined
+                ? latestTelemetry.velocity_mps.toFixed(2)
+                : latestTelemetry?.rpm ? (latestTelemetry.rpm * 0.0036).toFixed(2) : '0.00'}
+            </span>
+            <span className="text-xs text-zinc-500">m/s</span>
+          </div>
+          <div className="text-[10px] text-zinc-400">
+            Derived motion estimate
+          </div>
         </div>
       </div>
     </div>

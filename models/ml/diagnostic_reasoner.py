@@ -312,18 +312,79 @@ def _build_structured_result(
         "primary_hypothesis": {
             "id": primary_id,
             "label": primary_label,
+            "description": primary.description if primary else "",
             "diagnostic_score": round(primary.diagnostic_score, 3) if primary else 0.0,
             "affected_subsystem": primary.affected_subsystem if primary else "unknown",
+            "supporting_evidence_ids": primary.supporting_evidence_ids if primary else [],
+            "contradicting_evidence_ids": primary.contradicting_evidence_ids if primary else [],
+            "matched_supporting_patterns": primary.matched_supporting_patterns if primary else [],
+            "matched_contradicting_patterns": primary.matched_contradicting_patterns if primary else [],
         },
 
         "alternative_hypotheses": [
             {
                 "id": h.id,
                 "label": h.label,
+                "description": h.description,
                 "diagnostic_score": round(h.diagnostic_score, 3),
                 "affected_subsystem": h.affected_subsystem,
+                "supporting_evidence_ids": h.supporting_evidence_ids,
+                "contradicting_evidence_ids": h.contradicting_evidence_ids,
+                "matched_supporting_patterns": h.matched_supporting_patterns,
+                "matched_contradicting_patterns": h.matched_contradicting_patterns,
             }
             for h in alternatives
+        ],
+
+        "signals_summary": {
+            "current": packet.current,
+            "rpm": packet.rpm,
+            "velocity": packet.velocity,
+            "motor_command": packet.motor_command,
+            "trends": packet.trends,
+            "persistence": packet.persistence.value,
+            "temporal_relationships": packet.temporal_relationships,
+        },
+
+        "what_changed": [
+            {
+                "metric": "Motor Command",
+                "baseline": "Forward Cruise",
+                "current": f"PWM {packet.motor_command.get('pwm', 0)} ({'Sustained' if packet.motor_command.get('sustained') else 'Transient'})",
+                "change": "sustained high" if packet.motor_command.get("sustained") else "normal",
+                "status": "nominal" if not packet.motor_command.get("sustained") else "concerning",
+            },
+            {
+                "metric": "Motor Current",
+                "baseline": f"{packet.current.get('baseline_a', 1.6):.2f} A",
+                "current": f"{packet.current.get('current_a', 0.0):.2f} A",
+                "change": f"{'+' if (packet.current.get('increase_pct') or 0) > 0 else ''}{packet.current.get('increase_pct', 0):.0f}%",
+                "status": "elevated" if (packet.current.get("increase_pct") or 0) > 30 else "nominal",
+            },
+            {
+                "metric": "Wheel RPM",
+                "baseline": f"{packet.rpm.get('baseline_rpm', 225):.0f} RPM",
+                "current": f"{packet.rpm.get('current_rpm', 0):.0f} RPM",
+                "change": f"{packet.rpm.get('change_pct', 0):.0f}%",
+                "status": "collapsed" if (packet.rpm.get("change_pct") or 0) < -50 else "nominal",
+            },
+            *(
+                [{
+                    "metric": "Vehicle Motion",
+                    "baseline": f"{packet.velocity.get('baseline_mps', 0.8):.2f} m/s",
+                    "current": f"{packet.velocity.get('current_mps', 0.0):.2f} m/s",
+                    "change": f"{packet.velocity.get('change_pct', 0):.0f}%",
+                    "status": "stalled" if (packet.velocity.get("change_pct") or 0) < -50 else "nominal",
+                }]
+                if packet.velocity else []
+            ),
+            {
+                "metric": "Condition Persistence",
+                "baseline": "Transient noise",
+                "current": packet.persistence.value.capitalize(),
+                "change": f"Window {packet.time_window_seconds:.1f}s",
+                "status": "concerning" if packet.persistence == Persistence.PERSISTENT else "nominal",
+            },
         ],
 
         "evidence": evidence_dicts,

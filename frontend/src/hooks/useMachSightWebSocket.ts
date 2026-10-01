@@ -45,6 +45,7 @@ export function useMachSightWebSocket(defaultWsUrl = 'ws://127.0.0.1:8000/ws'): 
   const [machineId, setMachineId] = useState<string>('rc-sim-01');
   const [highlightMetrics, setHighlightMetrics] = useState<string[]>([]);
   const [activeAnomalyCount, setActiveAnomalyCount] = useState<number>(0);
+  const [lifecycleState, setLifecycleState] = useState<string>('HEALTHY');
 
   const [qualityMetrics, setQualityMetrics] = useState<QualityMetrics>({
     packetFreshnessMs: null,
@@ -63,9 +64,20 @@ export function useMachSightWebSocket(defaultWsUrl = 'ws://127.0.0.1:8000/ws'): 
   const reconnectAttemptsRef = useRef<number>(0);
   const wasAnomalyRef = useRef<boolean>(false);
   const consecutiveAnomalyCountRef = useRef<number>(0);
+  const lastDiagIdRef = useRef<string | null>(null);
+  const lastTimelineTypeRef = useRef<string | null>(null);
+  const lastTimelineTimeRef = useRef<number>(0);
 
-  // Append a timeline event
+  // Append a timeline event (debounced so identical rapid events are grouped)
   const addTimelineEvent = useCallback((event: Omit<TimelineEvent, 'id' | 'timeFormatted'>) => {
+    const now = Date.now();
+    // Debounce repeated events of same type within 2 seconds
+    if (lastTimelineTypeRef.current === event.type && now - lastTimelineTimeRef.current < 2000) {
+      return;
+    }
+    lastTimelineTypeRef.current = event.type;
+    lastTimelineTimeRef.current = now;
+
     const newEvent: TimelineEvent = {
       ...event,
       id: `${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
@@ -143,6 +155,7 @@ export function useMachSightWebSocket(defaultWsUrl = 'ws://127.0.0.1:8000/ws'): 
               distance_cm: d.distance_cm ?? null,
               current_a: d.current_a ?? null,
               rpm: d.rpm ?? null,
+              velocity_mps: d.velocity_mps ?? null,
               mode: d.mode ?? 'idle',
               pwm_command: d.pwm_command ?? 0,
               is_anomaly: d.is_anomaly ?? 0,
@@ -172,9 +185,9 @@ export function useMachSightWebSocket(defaultWsUrl = 'ws://127.0.0.1:8000/ws'): 
                 addTimelineEvent({
                   timestamp: packetTime,
                   type: 'anomaly',
-                  title: 'Anomaly Detected',
-                  description: `Statistical Mahalanobis distance exceeded threshold (${point.mahalanobis_distance.toFixed(2)}). Z-scores: Current=${point.current_zscore.toFixed(1)}, RPM=${point.rpm_zscore.toFixed(1)}`,
-                  severity: 'critical',
+                  title: 'Abnormal Signal Pattern Detected',
+                  description: `Current z-score ${point.current_zscore > 0 ? '+' : ''}${point.current_zscore.toFixed(1)}, RPM z-score ${point.rpm_zscore.toFixed(1)}. Mahalanobis distance=${point.mahalanobis_distance.toFixed(1)}`,
+                  severity: 'warning',
                 });
               }
             } else {
@@ -185,8 +198,8 @@ export function useMachSightWebSocket(defaultWsUrl = 'ws://127.0.0.1:8000/ws'): 
                 addTimelineEvent({
                   timestamp: packetTime,
                   type: 'recovery',
-                  title: 'Telemetry Normalized',
-                  description: 'All sensor streams returned to within conditioned baseline tolerances.',
+                  title: 'Telemetry Returned to Baseline',
+                  description: 'All sensor streams operating within conditioned baseline tolerances.',
                   severity: 'nominal',
                 });
               }
@@ -215,9 +228,35 @@ export function useMachSightWebSocket(defaultWsUrl = 'ws://127.0.0.1:8000/ws'): 
               totalPackets: prev.totalPackets + 1,
               totalAnomalies: prev.totalAnomalies + (isAnomaly ? 1 : 0),
             }));
-          } else if (eventType === 'diagnosis' && message.data) {
+          } else if (eventType === 'lifecycle' && message.data) {
+            const state = message.data.state;
+            if (state) {
+              setLifecycleState(state);
+              if (state === 'INVESTIGATING') {
+                addTimelineEvent({
+                  timestamp: Date.now(),
+                  type: 'lifecycle',
+                  title: 'Investigation Started',
+                  description: 'Abnormal sensor relationship detected — autonomous reasoner analyzing evidence window.',
+                  severity: 'info',
+                });
+              } else if (state === 'RECOVERED') {
+                addTimelineEvent({
+                  timestamp: Date.now(),
+                  type: 'recovery',
+                  title: 'Recovery Confirmed',
+                  description: 'Telemetry signals returned to healthy baseline. Machine operating normally.',
+                  severity: 'nominal',
+                });
+              }
+            }
+          } else if (
+            (eventType === 'diagnostic_update' && message.data?.diagnosis) ||
+            (eventType === 'diagnosis' && message.data)
+          ) {
+            const rawDiag = message.data.diagnosis || message.data;
             let parsedPayload: ParsedDiagnosis;
-            const rawPayload = message.data.payload;
+            const rawPayload = rawDiag.payload || rawDiag;
 
             if (typeof rawPayload === 'string') {
               try {
@@ -238,29 +277,44 @@ export function useMachSightWebSocket(defaultWsUrl = 'ws://127.0.0.1:8000/ws'): 
               parsedPayload = rawPayload;
             }
 
-            // Enrich with event metadata
+            const diagTimestamp = message.data.timestamp
+              ? message.data.timestamp < 1e11
+                ? message.data.timestamp * 1000
+                : message.data.timestamp
+              : Date.now();
+
             const diagnosisWithMeta: ParsedDiagnosis = {
               ...parsedPayload,
-              trace_id: message.data.trace_id,
-              timestamp: message.data.timestamp
-                ? (message.data.timestamp < 1e11 ? message.data.timestamp * 1000 : message.data.timestamp)
-                : Date.now(),
+              trace_id: message.data.trace_id || parsedPayload.trace_id,
+              timestamp: diagTimestamp,
             };
 
+            // Avoid flashing repeated identical diagnoses
+            const diagKey = `${diagnosisWithMeta.diagnosis}-${diagnosisWithMeta.severity}-${diagnosisWithMeta.is_recovery ? 'rec' : 'fault'}`;
+            const isMeaningfullyDifferent = lastDiagIdRef.current !== diagKey;
+            lastDiagIdRef.current = diagKey;
+
             setLatestDiagnosis(diagnosisWithMeta);
-            setDiagnosisHistory((prev) => [diagnosisWithMeta, ...prev.slice(0, 49)]);
+            if (isMeaningfullyDifferent) {
+              setDiagnosisHistory((prev) => [diagnosisWithMeta, ...prev.slice(0, 49)]);
+            }
 
             if (diagnosisWithMeta.ui_hints?.highlight_metrics) {
               setHighlightMetrics(diagnosisWithMeta.ui_hints.highlight_metrics as string[]);
             }
 
-            addTimelineEvent({
-              timestamp: diagnosisWithMeta.timestamp || Date.now(),
-              type: 'diagnosis',
-              title: diagnosisWithMeta.diagnosis || 'Diagnostic Assessment Generated',
-              description: `Suspected Component: ${diagnosisWithMeta.suspected_component || 'Not identified'}. Severity: ${diagnosisWithMeta.severity}. Stage: ${diagnosisWithMeta.stage || 'final'}.`,
-              severity: diagnosisWithMeta.severity === 'critical' ? 'critical' : diagnosisWithMeta.severity === 'warning' ? 'warning' : 'info',
-            });
+            if (isMeaningfullyDifferent) {
+              const isRecovery = diagnosisWithMeta.is_recovery === true;
+              addTimelineEvent({
+                timestamp: diagTimestamp,
+                type: isRecovery ? 'recovery' : 'diagnosis',
+                title: diagnosisWithMeta.diagnosis || (isRecovery ? 'Recovery Observed' : 'Diagnostic Assessment Generated'),
+                description: isRecovery
+                  ? 'Sensor signals normalized toward baseline tolerances.'
+                  : `Primary hypothesis identified with score ${(diagnosisWithMeta.primary_hypothesis?.diagnostic_score ?? diagnosisWithMeta.confidence ?? 0).toFixed(2)}. Severity: ${diagnosisWithMeta.severity.toUpperCase()}.`,
+                severity: isRecovery ? 'nominal' : diagnosisWithMeta.severity === 'critical' ? 'critical' : diagnosisWithMeta.severity === 'warning' ? 'warning' : 'info',
+              });
+            }
           }
         } catch (err) {
           console.error('Failed to parse incoming WebSocket frame:', err);
@@ -312,19 +366,42 @@ export function useMachSightWebSocket(defaultWsUrl = 'ws://127.0.0.1:8000/ws'): 
     };
   }, [connect]);
 
-  // Derive Overall Health Status
+  // Derive Overall Health Status adhering to Section 5:
+  // HEALTHY | INVESTIGATING | FAULT DETECTED | RECOVERING | RECOVERED | OFFLINE
   const healthStatus: MachineHealthStatus = (() => {
     if (connectionState === 'DISCONNECTED' && !latestTelemetry) {
-      return 'UNKNOWN';
+      return 'OFFLINE';
+    }
+
+    // Direct mapping from backend lifecycle state if explicitly signaled
+    if (lifecycleState === 'INVESTIGATING' || lifecycleState === 'ANALYZING' || lifecycleState === 'FAULT_SUSPECTED') {
+      return 'INVESTIGATING';
+    }
+    if (lifecycleState === 'RECOVERING' || lifecycleState === 'MONITORING') {
+      return 'RECOVERING';
+    }
+    if (lifecycleState === 'RECOVERED') {
+      return 'RECOVERED';
+    }
+    if (lifecycleState === 'FAULT DETECTED' || lifecycleState === 'DIAGNOSED') {
+      return 'FAULT DETECTED';
+    }
+    if (lifecycleState === 'NORMAL' || lifecycleState === 'HEALTHY') {
+      return 'HEALTHY';
+    }
+
+    // Fallback inference from active diagnosis and telemetry
+    if (latestDiagnosis?.is_recovery) {
+      return 'RECOVERED';
+    }
+    if (activeAnomalyCount >= 3 || (latestDiagnosis && latestDiagnosis.severity !== 'info')) {
+      return 'FAULT DETECTED';
+    }
+    if (activeAnomalyCount > 0) {
+      return 'INVESTIGATING';
     }
     if (latestTelemetry?.distance_plausible === 0) {
       return 'SENSOR_ISSUE';
-    }
-    if (latestTelemetry?.is_anomaly === 1 || activeAnomalyCount > 0) {
-      return 'ANOMALY';
-    }
-    if (latestDiagnosis?.severity === 'warning') {
-      return 'ATTENTION';
     }
     return 'HEALTHY';
   })();

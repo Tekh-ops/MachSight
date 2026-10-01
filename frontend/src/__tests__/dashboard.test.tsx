@@ -237,13 +237,13 @@ describe('MachSight Operator Dashboard — Phase 6 Test Suite', () => {
 
     render(<DiagnosticPanel diagnosis={mockDiagnosis} />);
     expect(
-      screen.getByText('Mechanical drag detected in drivetrain transmission')
-    ).toBeInTheDocument();
+      screen.getAllByText('Mechanical drag detected in drivetrain transmission').length
+    ).toBeGreaterThan(0);
     expect(screen.getAllByText(/DRIVETRAIN/i).length).toBeGreaterThan(0);
     expect(screen.getByText(/92%/i)).toBeInTheDocument();
     expect(
-      screen.getByText(/Inspect drive axle and wheel bearings/i)
-    ).toBeInTheDocument();
+      screen.getAllByText(/Inspect drive axle and wheel bearings/i).length
+    ).toBeGreaterThan(0);
   });
 
   // Test 8: Anomaly events render correctly

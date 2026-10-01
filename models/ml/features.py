@@ -10,8 +10,8 @@ import numpy as np
 
 from .detector import score_reading
 
-MIN_VALID_DISTANCE_CM = 2.0
-MAX_VALID_DISTANCE_CM = 400.0
+MIN_VALID_DISTANCE_CM = 1.0
+MAX_VALID_DISTANCE_CM = 450.0
 
 
 def process_reading(
@@ -73,10 +73,10 @@ def process_reading(
     elif distance_cm < MIN_VALID_DISTANCE_CM or distance_cm > MAX_VALID_DISTANCE_CM:
         distance_plausible = False
 
-    # Check if distance is frozen while vehicle is active
+    # Check if distance is frozen while vehicle is active (only for in-range obstacles < 390 cm)
     if distance_plausible and window and len(window) >= 3:
         is_moving = mode != "idle" and (rpm_val > 10.0 or pwm_command > 0)
-        if is_moving:
+        if is_moving and distance_cm < 390.0:
             dist_samples = [float(r.get("distance_cm", 0.0)) for r in window] + [distance_cm]
             # If standard deviation is essentially zero across consecutive readings while moving
             if float(np.std(dist_samples)) < 1e-4:

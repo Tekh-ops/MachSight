@@ -55,7 +55,11 @@ from ml import reasoner
 # Phase 2 — Intelligent diagnostic reasoning
 from ml.temporal_evidence import extract_diagnostic_evidence, MachineOperatingState, Persistence
 from ml.hypothesis_scorer import score_hypotheses
-from ml.diagnostic_lifecycle import diagnostic_lifecycle_registry, DiagnosticTrigger
+from ml.diagnostic_lifecycle import (
+    diagnostic_lifecycle_registry,
+    DiagnosticTrigger,
+    DiagnosticLifecycleState,
+)
 from ml.diagnostic_reasoner import reason_v2, reason_fallback_v2, build_recovery_result
 
 import config
@@ -326,6 +330,13 @@ async def trigger_investigation(
                     diag_v2["trace_id"] = trace_id
                     lifecycle.mark_diagnosed()
                     await broadcast("diagnostic_update", {"diagnosis": diag_v2})
+                    await broadcast("lifecycle", {
+                        "machine_id": machine_id,
+                        "state": "FAULT DETECTED",
+                        "lifecycle_state": "DIAGNOSED",
+                        "trigger": "diagnosis_complete",
+                        "timestamp": time.time(),
+                    })
                 except Exception as _e2:
                     logger.warning(f"Phase 2 reasoning error (non-fatal): {_e2}")
 
@@ -544,15 +555,61 @@ async def telemetry_ingest_ws(websocket: WebSocket) -> None:
             }
             await broadcast("processed", {**processed_row, "id": processed_id, **raw_sensor_fields})
 
+            # --- Machine lifecycle & state transitions ---
+            m_id = machine.machine_id
+            lc = diagnostic_lifecycle_registry.get(m_id)
+
             # --- Update machine-scoped anomaly counter ---
             if is_anomaly:
                 machine.record_anomaly()
             else:
                 machine.reset_anomaly_counter()
+                # Check for recovery if machine was faulted/diagnosed
+                if lc.state in (DiagnosticLifecycleState.DIAGNOSED, DiagnosticLifecycleState.MONITORING):
+                    recent_window = list(machine.rolling_buffer)[-config.ANALYSIS_WINDOW_SIZE:]
+                    if len(recent_window) >= 2:
+                        rec_packet = extract_diagnostic_evidence(
+                            machine_id=m_id,
+                            window=recent_window,
+                            processed_latest=processed,
+                            matches=[],
+                            window_seconds=max(len(recent_window) * 0.5, 2.0),
+                        )
+                        prev_state = lc.state
+                        trigger = lc.update(rec_packet, is_anomaly=False, consecutive_anomalies=0)
+                        if lc.state != prev_state:
+                            ui_state = (
+                                "RECOVERING" if lc.state == DiagnosticLifecycleState.MONITORING
+                                else ("RECOVERED" if lc.state == DiagnosticLifecycleState.RECOVERED else "HEALTHY")
+                            )
+                            await broadcast("lifecycle", {
+                                "machine_id": m_id,
+                                "state": ui_state,
+                                "lifecycle_state": lc.state.value,
+                                "trigger": trigger.value if trigger else "recovery_monitoring",
+                                "timestamp": time.time(),
+                            })
+                            if lc.state == DiagnosticLifecycleState.RECOVERED:
+                                recovery_diag = build_recovery_result(rec_packet)
+                                recovery_diag["trace_id"] = str(uuid.uuid4())
+                                await broadcast("diagnostic_update", {"diagnosis": recovery_diag})
 
             # --- Trigger investigation if threshold reached ---
             if machine.should_trigger_investigation():
                 machine.reset_anomaly_counter()
+                lc._transition(
+                    DiagnosticLifecycleState.ANALYZING,
+                    DiagnosticTrigger.ANOMALY_THRESHOLD,
+                    operating_state="INVESTIGATING",
+                    evidence_summary="Multivariate anomaly threshold reached. Investigating root cause.",
+                )
+                await broadcast("lifecycle", {
+                    "machine_id": m_id,
+                    "state": "INVESTIGATING",
+                    "lifecycle_state": "ANALYZING",
+                    "trigger": "anomaly_threshold",
+                    "timestamp": time.time(),
+                })
                 result = {
                     "is_anomaly": is_anomaly,
                     "anomaly_score": processed["mahalanobis_distance"],

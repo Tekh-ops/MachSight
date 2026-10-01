@@ -147,6 +147,12 @@ class DiagnosticLifecycle:
         if is_recovering_signals:
             if self._recovery_start_time is None:
                 self._recovery_start_time = now
+                self._transition(
+                    DiagnosticLifecycleState.MONITORING,
+                    DiagnosticTrigger.RECOVERY_DETECTED,
+                    operating_state=op_str,
+                    evidence_summary="Signals returning toward baseline; monitoring recovery.",
+                )
             elif (now - self._recovery_start_time) >= self.recovery_confirmation_s:
                 # Recovery confirmed
                 self._transition(
