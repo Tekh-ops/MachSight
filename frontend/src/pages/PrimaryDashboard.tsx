@@ -47,7 +47,11 @@ export const PrimaryDashboard: React.FC<Props> = ({ state }) => {
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
         {/* Synchronized Causal Trend Charts (8 cols) */}
         <div className="lg:col-span-8">
-          <LiveSignalCharts telemetryHistory={state.telemetryHistory} />
+          <LiveSignalCharts
+            telemetryHistory={state.telemetryHistory}
+            updateInterval={state.updateInterval}
+            setUpdateInterval={state.setUpdateInterval}
+          />
         </div>
 
         {/* Machine Schematic Topology (4 cols) */}

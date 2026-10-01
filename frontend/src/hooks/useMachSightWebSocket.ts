@@ -10,7 +10,7 @@ import type {
 } from '../types/domain';
 import { formatTimestamp } from '../utils/formatters';
 
-const MAX_HISTORY_POINTS = 100;
+const MAX_HISTORY_POINTS = 300;
 const MAX_TIMELINE_EVENTS = 100;
 
 export interface UseMachSightReturn {
@@ -30,6 +30,8 @@ export interface UseMachSightReturn {
   readonly reconnect: () => void;
   readonly setCustomWsEndpoint: (url: string) => void;
   readonly wsEndpoint: string;
+  readonly updateInterval: number;
+  readonly setUpdateInterval: (interval: number) => void;
 }
 
 export function useMachSightWebSocket(defaultWsUrl = 'ws://127.0.0.1:8000/ws'): UseMachSightReturn {
@@ -46,6 +48,7 @@ export function useMachSightWebSocket(defaultWsUrl = 'ws://127.0.0.1:8000/ws'): 
   const [highlightMetrics, setHighlightMetrics] = useState<string[]>([]);
   const [activeAnomalyCount, setActiveAnomalyCount] = useState<number>(0);
   const [lifecycleState, setLifecycleState] = useState<string>('HEALTHY');
+  const [updateInterval, setUpdateInterval] = useState<number>(100); // Default 100ms
 
   const [qualityMetrics, setQualityMetrics] = useState<QualityMetrics>({
     packetFreshnessMs: null,
@@ -67,12 +70,13 @@ export function useMachSightWebSocket(defaultWsUrl = 'ws://127.0.0.1:8000/ws'): 
   const lastDiagIdRef = useRef<string | null>(null);
   const lastTimelineTypeRef = useRef<string | null>(null);
   const lastTimelineTimeRef = useRef<number>(0);
+  const lastUpdateTimeRef = useRef<number>(0);
 
   // Append a timeline event (debounced so identical rapid events are grouped)
   const addTimelineEvent = useCallback((event: Omit<TimelineEvent, 'id' | 'timeFormatted'>) => {
     const now = Date.now();
-    // Debounce repeated events of same type within 2 seconds
-    if (lastTimelineTypeRef.current === event.type && now - lastTimelineTimeRef.current < 2000) {
+    // Debounce repeated events of same type within 5 seconds to reduce flow
+    if (lastTimelineTypeRef.current === event.type && now - lastTimelineTimeRef.current < 5000) {
       return;
     }
     lastTimelineTypeRef.current = event.type;
@@ -139,9 +143,13 @@ export function useMachSightWebSocket(defaultWsUrl = 'ws://127.0.0.1:8000/ws'): 
           const message = JSON.parse(event.data);
           const eventType = message.type || message.event;
 
-          if (eventType === 'processed' && message.data) {
+          // Throttle telemetry updates based on updateInterval
+          const now = Date.now();
+          const shouldProcessTelemetry = eventType === 'processed' && message.data && (now - lastUpdateTimeRef.current >= updateInterval);
+
+          if (shouldProcessTelemetry) {
+            lastUpdateTimeRef.current = now;
             const d = message.data;
-            const now = Date.now();
             const packetTime = d.timestamp ? (d.timestamp < 1e11 ? d.timestamp * 1000 : d.timestamp) : now;
             const freshness = Math.max(0, Math.round(now - packetTime));
 
@@ -228,7 +236,10 @@ export function useMachSightWebSocket(defaultWsUrl = 'ws://127.0.0.1:8000/ws'): 
               totalPackets: prev.totalPackets + 1,
               totalAnomalies: prev.totalAnomalies + (isAnomaly ? 1 : 0),
             }));
-          } else if (eventType === 'lifecycle' && message.data) {
+          }
+
+          // Always process non-telemetry events (lifecycle, diagnosis, etc.)
+          if (eventType === 'lifecycle' && message.data) {
             const state = message.data.state;
             if (state) {
               setLifecycleState(state);
@@ -428,5 +439,7 @@ export function useMachSightWebSocket(defaultWsUrl = 'ws://127.0.0.1:8000/ws'): 
     reconnect: manualReconnect,
     setCustomWsEndpoint: setWsEndpoint,
     wsEndpoint,
+    updateInterval,
+    setUpdateInterval,
   };
 }

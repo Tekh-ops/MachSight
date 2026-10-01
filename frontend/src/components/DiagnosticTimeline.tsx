@@ -1,8 +1,20 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import type { TimelineEvent } from '../types/domain';
 
 interface Props {
   readonly events: readonly TimelineEvent[];
+}
+
+interface GroupedEvent {
+  type: string;
+  severity: TimelineEvent['severity'];
+  count: number;
+  firstTitle: string;
+  firstDescription: string;
+  firstTimestamp: number;
+  firstTimeFormatted: string;
+  latestTimestamp: number;
+  latestTimeFormatted: string;
 }
 
 export const DiagnosticTimeline: React.FC<Props> = ({ events }) => {
@@ -13,6 +25,73 @@ export const DiagnosticTimeline: React.FC<Props> = ({ events }) => {
     if (filter === 'DIAGNOSES') return ev.type === 'diagnosis';
     return true;
   });
+
+  // Group consecutive events of the same type within 10 seconds
+  const groupedEvents = useMemo(() => {
+    const groups: GroupedEvent[] = [];
+    let currentGroup: TimelineEvent[] = [];
+
+    filteredEvents.forEach((ev) => {
+      if (currentGroup.length === 0) {
+        currentGroup.push(ev);
+      } else {
+        const lastEv = currentGroup[currentGroup.length - 1];
+        if (!lastEv) {
+          currentGroup.push(ev);
+          return;
+        }
+        const timeDiff = Math.abs(ev.timestamp - lastEv.timestamp);
+        const isSameType = ev.type === lastEv.type;
+        const isSameSeverity = ev.severity === lastEv.severity;
+
+        // Group if same type, same severity, and within 10 seconds
+        if (isSameType && isSameSeverity && timeDiff < 10000) {
+          currentGroup.push(ev);
+        } else {
+          // Finalize current group
+          if (currentGroup.length > 0) {
+            const first = currentGroup[0];
+            const last = currentGroup[currentGroup.length - 1];
+            if (first && last) {
+              groups.push({
+                type: first.type,
+                severity: first.severity,
+                count: currentGroup.length,
+                firstTitle: first.title,
+                firstDescription: first.description,
+                firstTimestamp: first.timestamp,
+                firstTimeFormatted: first.timeFormatted,
+                latestTimestamp: last.timestamp,
+                latestTimeFormatted: last.timeFormatted,
+              });
+            }
+          }
+          currentGroup = [ev];
+        }
+      }
+    });
+
+    // Add the last group
+    if (currentGroup.length > 0) {
+      const first = currentGroup[0];
+      const last = currentGroup[currentGroup.length - 1];
+      if (first && last) {
+        groups.push({
+          type: first.type,
+          severity: first.severity,
+          count: currentGroup.length,
+          firstTitle: first.title,
+          firstDescription: first.description,
+          firstTimestamp: first.timestamp,
+          firstTimeFormatted: first.timeFormatted,
+          latestTimestamp: last.timestamp,
+          latestTimeFormatted: last.timeFormatted,
+        });
+      }
+    }
+
+    return groups;
+  }, [filteredEvents]);
 
   const getSeverityStyle = (severity: TimelineEvent['severity']) => {
     switch (severity) {
@@ -40,6 +119,13 @@ export const DiagnosticTimeline: React.FC<Props> = ({ events }) => {
     }
   };
 
+  const formatGroupedTimeRange = (firstTime: string, latestTime: string, count: number) => {
+    if (count === 1) {
+      return firstTime;
+    }
+    return `${firstTime} → ${latestTime}`;
+  };
+
   return (
     <div
       data-testid="diagnostic-timeline"
@@ -50,7 +136,7 @@ export const DiagnosticTimeline: React.FC<Props> = ({ events }) => {
           <span className="font-mono text-xs font-bold text-zinc-900 dark:text-zinc-100 uppercase tracking-wide">
             CHRONOLOGICAL DIAGNOSTIC EVENT TIMELINE
           </span>
-          <span className="text-[10px] font-mono text-zinc-500">({events.length} RECORDED)</span>
+          <span className="text-[10px] font-mono text-zinc-500">({groupedEvents.length} GROUPED)</span>
         </div>
 
         {/* Filter controls */}
@@ -71,7 +157,7 @@ export const DiagnosticTimeline: React.FC<Props> = ({ events }) => {
         </div>
       </div>
 
-      {filteredEvents.length === 0 ? (
+      {groupedEvents.length === 0 ? (
         <div className="py-8 text-center font-mono text-xs text-zinc-400">
           No diagnostic events recorded yet. Events populate as anomalies and diagnosis steps occur.
         </div>
@@ -80,10 +166,10 @@ export const DiagnosticTimeline: React.FC<Props> = ({ events }) => {
           {/* Vertical connecting line */}
           <div className="absolute top-2 bottom-2 left-2.5 w-0.5 bg-zinc-200 dark:bg-zinc-800" />
 
-          {filteredEvents.map((ev) => {
-            const style = getSeverityStyle(ev.severity);
+          {groupedEvents.map((group, idx) => {
+            const style = getSeverityStyle(group.severity);
             return (
-              <div key={ev.id} className="relative flex items-start gap-3">
+              <div key={`${group.type}-${group.firstTimestamp}-${idx}`} className="relative flex items-start gap-3">
                 {/* Event timeline node */}
                 <div
                   className={`absolute -left-6 top-1 w-3.5 h-3.5 rounded-full border-2 border-white dark:border-zinc-900 ${style.dot}`}
@@ -93,19 +179,24 @@ export const DiagnosticTimeline: React.FC<Props> = ({ events }) => {
                   <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
                     <div className="flex items-center gap-2">
                       <span className={`px-1.5 py-0.2 rounded text-[9px] font-mono font-bold uppercase border ${style.badge}`}>
-                        {ev.type}
+                        {group.type}
                       </span>
                       <span className="font-mono text-xs font-bold text-zinc-900 dark:text-zinc-100">
-                        {ev.title}
+                        {group.firstTitle}
                       </span>
+                      {group.count > 1 && (
+                        <span className="px-1.5 py-0.2 rounded text-[9px] font-mono bg-zinc-200 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300">
+                          ×{group.count}
+                        </span>
+                      )}
                     </div>
                     <span className="font-mono text-[10px] text-zinc-500 whitespace-nowrap">
-                      {ev.timeFormatted}
+                      {formatGroupedTimeRange(group.firstTimeFormatted, group.latestTimeFormatted, group.count)}
                     </span>
                   </div>
 
                   <p className="font-mono text-xs text-zinc-600 dark:text-zinc-400 leading-relaxed">
-                    {ev.description}
+                    {group.firstDescription}
                   </p>
                 </div>
               </div>

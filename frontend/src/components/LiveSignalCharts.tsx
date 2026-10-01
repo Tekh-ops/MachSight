@@ -4,12 +4,15 @@ import { formatValue, formatTimestamp } from '../utils/formatters';
 
 interface Props {
   readonly telemetryHistory: readonly TelemetryPoint[];
+  readonly updateInterval: number;
+  readonly setUpdateInterval: (interval: number) => void;
 }
 
 type ChannelKey = 'all' | 'current' | 'rpm' | 'distance';
 
-export const LiveSignalCharts: React.FC<Props> = ({ telemetryHistory }) => {
+export const LiveSignalCharts: React.FC<Props> = ({ telemetryHistory, updateInterval, setUpdateInterval }) => {
   const [activeChannel, setActiveChannel] = useState<ChannelKey>('all');
+  const [windowSize, setWindowSize] = useState<number>(150); // Default to ~30 seconds at ~5Hz
 
   if (!telemetryHistory || telemetryHistory.length === 0) {
     return (
@@ -24,10 +27,10 @@ export const LiveSignalCharts: React.FC<Props> = ({ telemetryHistory }) => {
     );
   }
 
-  // Rolling window of last 60 points
-  const points = telemetryHistory.slice(-60);
+  // Rolling window based on windowSize
+  const points = telemetryHistory.slice(-windowSize);
 
-  // SVG Chart Dimensions
+  // SVG Chart Dimensions (responsive via viewBox)
   const width = 800;
   const height = 140;
   const padLeft = 45;
@@ -90,7 +93,10 @@ export const LiveSignalCharts: React.FC<Props> = ({ telemetryHistory }) => {
     const lastTime = latestPt?.timestamp ? formatTimestamp(latestPt.timestamp) : '';
 
     return (
-      <div data-testid={testId} className="border border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-950/40 p-3">
+      <div
+        data-testid={testId}
+        className="border border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-950/40 p-3"
+      >
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-2">
             <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: color }} />
@@ -108,6 +114,7 @@ export const LiveSignalCharts: React.FC<Props> = ({ telemetryHistory }) => {
           viewBox={`0 0 ${width} ${height}`}
           className="w-full h-28 overflow-visible block"
           style={{ shapeRendering: 'geometricPrecision' }}
+          preserveAspectRatio="xMidYMid meet"
         >
           {/* Anomaly Highlight Bands (actual backend is_anomaly flag) */}
           {anomalyBands.map((band, idx) => (
@@ -226,35 +233,71 @@ export const LiveSignalCharts: React.FC<Props> = ({ telemetryHistory }) => {
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-200 dark:border-zinc-800 pb-3">
         <div className="flex items-center gap-2">
           <span className="font-mono text-xs font-bold text-zinc-900 dark:text-zinc-100 uppercase tracking-wide">
-            SYNCHRONIZED TELEMETRY SIGNALS // ROLLING WINDOW (60 SAMPLES)
+            SYNCHRONIZED TELEMETRY SIGNALS // ROLLING WINDOW ({windowSize} SAMPLES)
           </span>
           <span className="inline-flex items-center px-1.5 py-0.5 text-[10px] font-mono bg-red-500/10 text-red-400 border border-red-500/30 rounded">
             RED BANDS = ANOMALIES
           </span>
         </div>
 
-        {/* Channel Filter Buttons */}
-        <div className="flex items-center gap-1 font-mono text-[11px]">
-          {(
-            [
-              { key: 'all', label: 'All Channels' },
-              { key: 'current', label: 'Current' },
-              { key: 'rpm', label: 'RPM' },
-              { key: 'distance', label: 'Distance' },
-            ] as const
-          ).map((c) => (
-            <button
-              key={c.key}
-              onClick={() => setActiveChannel(c.key)}
-              className={`px-2 py-0.5 border ${
-                activeChannel === c.key
-                  ? 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900 font-bold border-transparent'
-                  : 'bg-zinc-50 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 border-zinc-300 dark:border-zinc-700 hover:bg-zinc-200 dark:hover:bg-zinc-700'
-              }`}
-            >
-              {c.label}
-            </button>
-          ))}
+        <div className="flex items-center gap-3">
+          {/* Window Size Slider */}
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-[10px] text-zinc-500">WINDOW:</span>
+            <input
+              type="range"
+              min="30"
+              max="300"
+              step="10"
+              value={windowSize}
+              onChange={(e) => setWindowSize(Number(e.target.value))}
+              className="w-24 h-1.5 bg-zinc-200 dark:bg-zinc-700 rounded-lg appearance-none cursor-pointer accent-zinc-900 dark:accent-zinc-100"
+            />
+            <span className="font-mono text-[10px] text-zinc-600 dark:text-zinc-400 w-8">
+              {windowSize}
+            </span>
+          </div>
+
+          {/* Update Speed Slider */}
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-[10px] text-zinc-500">SPEED:</span>
+            <input
+              type="range"
+              min="50"
+              max="500"
+              step="50"
+              value={updateInterval}
+              onChange={(e) => setUpdateInterval(Number(e.target.value))}
+              className="w-24 h-1.5 bg-zinc-200 dark:bg-zinc-700 rounded-lg appearance-none cursor-pointer accent-zinc-900 dark:accent-zinc-100"
+            />
+            <span className="font-mono text-[10px] text-zinc-600 dark:text-zinc-400 w-12">
+              {updateInterval}ms
+            </span>
+          </div>
+
+          {/* Channel Filter Buttons */}
+          <div className="flex items-center gap-1 font-mono text-[11px]">
+            {(
+              [
+                { key: 'all', label: 'All Channels' },
+                { key: 'current', label: 'Current' },
+                { key: 'rpm', label: 'RPM' },
+                { key: 'distance', label: 'Distance' },
+              ] as const
+            ).map((c) => (
+              <button
+                key={c.key}
+                onClick={() => setActiveChannel(c.key)}
+                className={`px-2 py-0.5 border ${
+                  activeChannel === c.key
+                    ? 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900 font-bold border-transparent'
+                    : 'bg-zinc-50 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 border-zinc-300 dark:border-zinc-700 hover:bg-zinc-200 dark:hover:bg-zinc-700'
+                }`}
+              >
+                {c.label}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
